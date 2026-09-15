@@ -1,14 +1,13 @@
 [project]
 name = "keeptrack"
-version = "1.0.1"
-description = "生成自定义跑步运动轨迹数据（FIT格式）的 Windows 图形界面工具"
+version = "2.1.0"
+description = ".fit文件生成器：免 Key 地图校准与 GPX 原路线导入"
 readme = "README.md"
 license = { text = "GPL-3.0-only" }
-requires-python = ">=3.8"
-dependencies = [
-    "fit-tool",
-]
+requires-python = ">=3.10"
+dependencies = ["fit-tool==0.9.16", "geographiclib==2.1", "coordtransform==0.2.1"]
 
 [project.urls]
-Homepage = "https://github.com/IAMAI-Dev/KeepTrack"
+Homepage = "https://github.com/Natsume624/fit-file-generator"
+Upstream = "https://github.com/IAMAI-Dev/KeepTrack"
 Repository = "https://github.com/IAMAI-Dev/KeepTrack"

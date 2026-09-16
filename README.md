@@ -2,7 +2,11 @@
 
 ————Natsume
 
-基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.1.1），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、平均步频设置和批量导出。
+基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.2.0），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、平均步频设置和批量导出。
+
+## Android 原生版
+
+仓库的 [`android`](android/) 目录包含面向 Android 8.0 及以上设备的原生应用。它支持免 Key 地图校准、GPX 分段导入与原路线生成，并通过系统文件选择器直接保存 FIT；不需要账号、服务器或存储权限。构建、安装范围与隐私说明见 [Android 说明](android/README.md)。
 
 ## 使用
 

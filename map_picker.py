@@ -144,7 +144,7 @@ class MapPicker:
             if time.monotonic()-self.last_search < 1.2:
                 return {'error': '请稍后再搜索', 'results': []}
             self.last_search = time.monotonic()
-            request = Request('https://photon.komoot.io/api/?'+urlencode({'q':query, 'limit':5}), headers={'User-Agent':'NatsumeFitGenerator/2.1.1 (personal desktop route editor)'})
+            request = Request('https://photon.komoot.io/api/?'+urlencode({'q':query, 'limit':5}), headers={'User-Agent':'NatsumeFitGenerator/2.2.0 (personal desktop route editor)'})
             with urlopen(request, timeout=12) as response:
                 raw = response.read(MAX_SEARCH_RESPONSE_BYTES + 1)
             if len(raw) > MAX_SEARCH_RESPONSE_BYTES:

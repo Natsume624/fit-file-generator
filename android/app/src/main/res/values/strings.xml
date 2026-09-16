@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">FIT 文件生成器</string>
+    <string name="save_fit">保存 FIT 文件</string>
+    <string name="metrics_summary">平均配速   %1$d′%2$02d″ /km\n平均步频   %3$d 步/分钟\n跑道周长   %4$.2f 米\n预计圈数   %5$.2f 圈</string>
+    <string name="route_metrics_summary">GPX 距离   %1$.3f km\n平均配速   %2$d′%3$02d″ /km\n平均步频   %4$d 步/分钟</string>
+    <string name="gpx_reading">正在读取 GPX…</string>
+    <string name="gpx_failed">GPX 导入失败</string>
+    <string name="gpx_loaded">GPX 原路线已载入</string>
+    <string name="route_note">%1$s · %2$d 个原始点\n距离按路线计算；不会拉伸、闭合或重复绕圈。</string>
+    <string name="default_distance" translatable="false">5.00</string>
+</resources>

@@ -1,6 +1,6 @@
 [project]
 name = "keeptrack"
-version = "2.1.1"
+version = "2.2.0"
 description = ".fit文件生成器：免 Key 地图校准与 GPX 原路线导入"
 readme = "README.md"
 license = { text = "GPL-3.0-only" }

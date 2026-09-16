@@ -209,3 +209,12 @@ __marimo__/
 # KeepTrack Generated Data
 *.fit
 Keep运动数据/
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/smoke-classes/
+android/local.properties
+android/.tools/
+android/.signing/
+*.apk

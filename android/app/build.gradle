@@ -1,0 +1,55 @@
+plugins {
+    id "com.android.application"
+}
+
+def releasePropertiesFile = rootProject.file(".signing/keystore.properties")
+def releaseProperties = new Properties()
+if (releasePropertiesFile.exists()) {
+    releasePropertiesFile.withInputStream { releaseProperties.load(it) }
+}
+
+android {
+    namespace "com.natsume.fitgenerator"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.natsume.fitgenerator"
+        minSdk 26
+        targetSdk 35
+        versionCode 220
+        versionName "2.2.0"
+    }
+
+    signingConfigs {
+        release {
+            if (releasePropertiesFile.exists()) {
+                storeFile rootProject.file(releaseProperties.getProperty("storeFile"))
+                storePassword releaseProperties.getProperty("storePassword")
+                keyAlias releaseProperties.getProperty("keyAlias")
+                keyPassword releaseProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            if (releasePropertiesFile.exists()) signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
+    sourceSets {
+        main.assets.srcDirs += ["../../web"]
+    }
+}

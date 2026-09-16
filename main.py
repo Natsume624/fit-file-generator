@@ -25,7 +25,7 @@ from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.profile_type import Event, EventType, FileType, Manufacturer, Sport, SubSport
 
 APP_NAME = ".fit文件生成器"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
 MAX_BATCH_RECORDS = 500_000

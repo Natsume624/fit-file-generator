@@ -2,7 +2,7 @@
 
 ————Natsume
 
-基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.1.0），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、平均步频设置和批量导出。
+基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.1.1），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、平均步频设置和批量导出。
 
 ## 使用
 

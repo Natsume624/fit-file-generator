@@ -6,6 +6,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from dataclasses import replace
 from datetime import datetime
+from unittest.mock import patch
 from fit_tool.fit_file import FitFile
 from fit_tool.profile.messages.record_message import RecordMessage
 from fit_tool.profile.messages.session_message import SessionMessage
@@ -38,6 +39,14 @@ class RouteTests(unittest.TestCase):
         for data in ['<gpx><trk>','<test/>','<!DOCTYPE gpx [<!ENTITY a "b">]><gpx/>','<gpx><trk><trkseg><trkpt lat="nan" lon="114"/><trkpt lat="31" lon="114"/></trkseg></trk></gpx>']:
             self.path.write_text(data,encoding='utf8')
             with self.assertRaises(ValueError):load_gpx(self.path)
+        self.path.write_bytes('<!DOCTYPE gpx [<!ENTITY a "b">]><gpx/>'.encode('utf-16'))
+        with self.assertRaises(ValueError):load_gpx(self.path)
+
+    def test_gpx_read_is_bounded(self):
+        self.path.write_bytes(b'<gpx/>more')
+        with patch('routes.MAX_GPX_BYTES', 8):
+            with self.assertRaisesRegex(ValueError, '20 MB'):
+                load_gpx(self.path)
 
     def test_coordinate_conversion_is_explicit(self):
         self.path.write_text(GPX,encoding='utf8')
@@ -74,7 +83,11 @@ class BridgeTests(unittest.TestCase):
         return json.load(urlopen(request))
 
     def test_static_preview_and_apply(self):
-        with urlopen(self.picker.url) as r:self.assertIn(b'leaflet',r.read())
+        with urlopen(self.picker.url) as r:
+            self.assertIn(b'leaflet',r.read())
+            self.assertEqual(r.headers['X-Frame-Options'],'DENY')
+            self.assertIn("default-src 'none'",r.headers['Content-Security-Policy'])
+            self.assertEqual(r.headers['Referrer-Policy'],'no-referrer')
         self.assertEqual(self.post('preview',self.values)['points'],[[30.58,114.33]])
         self.assertTrue(self.post('apply',self.values)['ok'])
         self.assertEqual(len(self.applied),1)
@@ -86,6 +99,12 @@ class BridgeTests(unittest.TestCase):
         for values in [{},dict(self.values,lat=float('nan')),dict(self.values,radius=-1)]:
             with self.assertRaises(HTTPError) as result:self.post('apply',values)
             self.assertEqual(result.exception.code,400)
+        request=Request(self.picker.url+'apply',data=b'{}',headers={'Content-Type':'text/plain','Origin':'http://'+self.picker.address})
+        with self.assertRaises(HTTPError) as result:urlopen(request)
+        self.assertEqual(result.exception.code,400)
+        request=Request(self.picker.url+'apply',data=b' '*4097,headers={'Content-Type':'application/json','Origin':'http://'+self.picker.address})
+        with self.assertRaises(HTTPError) as result:urlopen(request)
+        self.assertEqual(result.exception.code,400)
         self.assertFalse(self.applied)
 
     def test_gpx_cannot_be_overwritten_from_map(self):

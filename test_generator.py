@@ -68,6 +68,18 @@ class GeneratorTests(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     generate_fit(run, path)
 
+    def test_generation_rejects_unsafe_resource_inputs(self):
+        invalid = [
+            replace(self.run, duration=0),
+            replace(self.run, duration=86_401),
+            replace(self.run, cadence=30.5),
+            replace(self.run, distance=float('nan')),
+            replace(self.run, lat=91),
+        ]
+        for run in invalid:
+            with self.subTest(run=run), self.assertRaises(ValueError):
+                generate_fit(run, Path('unused.fit'))
+
 
 if __name__ == "__main__":
     unittest.main()

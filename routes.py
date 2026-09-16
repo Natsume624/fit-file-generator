@@ -6,6 +6,10 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from geographiclib.geodesic import Geodesic
 
+MAX_GPX_BYTES = 20 * 1024 * 1024
+MAX_GPX_ELEMENTS = 200_000
+MAX_GPX_POINTS = 100_000
+
 
 @dataclass(frozen=True)
 class Route:
@@ -58,9 +62,14 @@ def make_route(name, points):
 
 def load_gpx(path, convert=lambda lat, lon: (lat, lon)):
     path = Path(path)
-    if path.stat().st_size > 20*1024*1024:
+    if not path.is_file():
+        raise ValueError('请选择有效的 GPX 文件')
+    # Bound the read itself instead of trusting a separate stat call: the file
+    # could change between checking its size and opening it.
+    with path.open('rb') as source:
+        data = source.read(MAX_GPX_BYTES + 1)
+    if len(data) > MAX_GPX_BYTES:
         raise ValueError('GPX 超过 20 MB，请先裁剪轨迹')
-    data = path.read_bytes()
     # GPX does not need a DTD. Reject entities before the XML parser runs,
     # including the UTF-16 representation of declaration tokens.
     if b'<!DOCTYPE' in data.replace(b'\x00', b'').upper() or b'<!ENTITY' in data.replace(b'\x00', b'').upper():
@@ -69,6 +78,8 @@ def load_gpx(path, convert=lambda lat, lon: (lat, lon)):
         root = ET.fromstring(data)
     except ET.ParseError as error:
         raise ValueError('GPX XML 格式错误') from error
+    if sum(1 for _ in root.iter()) > MAX_GPX_ELEMENTS:
+        raise ValueError('GPX XML 元素过多，请先裁剪轨迹')
     local = lambda tag: tag.rsplit('}', 1)[-1]
     if local(root.tag) != 'gpx':
         raise ValueError('请选择 GPX 文件')
@@ -82,7 +93,7 @@ def load_gpx(path, convert=lambda lat, lon: (lat, lon)):
             if local(node.tag) not in ('trkpt', 'rtept'):
                 continue
             point_count += 1
-            if point_count > 100000:
+            if point_count > MAX_GPX_POINTS:
                 raise ValueError('GPX 轨迹点超过 10 万，请先裁剪')
             try:
                 lat, lon = float(node.attrib['lat']), float(node.attrib['lon'])

@@ -28,6 +28,7 @@ APP_NAME = ".fit文件生成器"
 VERSION = "2.1.0"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
+MAX_BATCH_RECORDS = 500_000
 
 
 def to_wgs84(lat, lon, source):
@@ -91,7 +92,30 @@ def track_position(run, distance):
     return result["lat2"], result["lon2"]
 
 
+def validate_run(run):
+    """Validate the public generation boundary, not only GUI input fields."""
+    if not isinstance(run, Run):
+        raise ValueError("生成参数格式无效")
+    numeric_limits = {
+        "distance": (1, 1_000_000), "lat": (-85, 85), "lon": (-180, 180),
+        "bearing": (0, 360), "straight": (1, 1000), "radius": (5, 300),
+    }
+    for name, (low, high) in numeric_limits.items():
+        value = getattr(run, name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name} 参数格式无效")
+        if not math.isfinite(value) or not low <= value <= high:
+            raise ValueError(f"{name} 参数超出范围")
+    if isinstance(run.duration, bool) or not isinstance(run.duration, int) or not 1 <= run.duration <= 86_400:
+        raise ValueError("duration 参数应为 1～86400 的整数秒")
+    if isinstance(run.cadence, bool) or not isinstance(run.cadence, int) or not 30 <= run.cadence <= 300:
+        raise ValueError("cadence 参数应为 30～300 的整数")
+    if not isinstance(run.start, datetime):
+        raise ValueError("start 参数应为日期时间")
+
+
 def generate_fit(run, destination, progress=lambda _: None):
+    validate_run(run)
     builder = FitFileBuilder(auto_define=True, min_string_size=50)
     start_ts = int(run.start.timestamp() * 1000)
     end_ts = start_ts + run.duration * 1000
@@ -494,6 +518,8 @@ class FITGeneratorGUI:
             interval = self._number("interval", 0, 8760)
             if count > 1 and interval * 3600 < run.duration:
                 raise ValueError("批量开始时间间隔不能短于运动时长")
+            if count * (run.duration + 1) > MAX_BATCH_RECORDS:
+                raise ValueError("批量任务过大：总记录数不能超过 50 万，请减少份数或时长")
             if not self.v["output"].get().strip():
                 raise ValueError("请选择保存目录")
             output = Path(self.v["output"].get().strip()).resolve()

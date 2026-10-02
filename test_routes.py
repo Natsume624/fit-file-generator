@@ -71,6 +71,23 @@ class RouteTests(unittest.TestCase):
             self.assertLess(Geodesic.WGS84.Inverse(record.position_lat,record.position_long,*expected)['s12'],.02)
 
 
+    def test_gpx_custom_step_length(self):
+        self.path.write_text(GPX, encoding='utf8')
+        route = load_gpx(self.path)[0]
+        run = Run(route.length, 100, 171, 0, 0, 0, 84.39, 36.8,
+                  datetime(2026, 9, 15, 8), route, step_length=0.8)
+        fit = Path(self.temp.name) / 'route-custom.fit'
+        generate_fit(run, fit)
+        messages = [r.message for r in FitFile.from_file(str(fit)).records if not r.is_definition]
+        points = [m for m in messages if isinstance(m, RecordMessage)]
+        summary = next(m for m in messages if isinstance(m, SessionMessage))
+        self.assertAlmostEqual(summary.total_distance, route.length, delta=.01)
+        self.assertEqual(summary.avg_step_length, 800)
+        self.assertTrue(all(point.step_length == 800 for point in points))
+        for record, expected in [(points[0], route.points[0]), (points[-1], route.points[-1])]:
+            self.assertLess(Geodesic.WGS84.Inverse(record.position_lat, record.position_long, *expected)['s12'], .02)
+
+
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.applied=[]

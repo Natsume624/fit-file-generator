@@ -13,7 +13,7 @@ import webbrowser
 
 from coordTransform import wgs84_to_gcj02, gcj02_to_wgs84, bd09_to_gcj02
 from routes import Route, load_gpx
-from map_picker import MapPicker
+from map_picker import MapPicker, WEB_ROOT
 from geographiclib.geodesic import Geodesic
 from fit_tool.fit_file_builder import FitFileBuilder
 from fit_tool.profile.messages.activity_message import ActivityMessage
@@ -25,10 +25,12 @@ from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.profile_type import Event, EventType, FileType, Manufacturer, Sport, SubSport
 
 APP_NAME = ".fit文件生成器"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
 MAX_BATCH_RECORDS = 500_000
+MIN_STEP_LENGTH = 0.01
+MAX_STEP_LENGTH = 6.5
 
 
 def to_wgs84(lat, lon, source):
@@ -60,10 +62,15 @@ class Run:
     radius: float
     start: datetime
     route: Route | None = None
+    step_length: float | None = None  # Metres per step; None keeps automatic calculation.
 
     @property
     def perimeter(self):
         return 2 * self.straight + 2 * math.pi * self.radius
+
+    @property
+    def effective_step_length(self):
+        return self.step_length if self.step_length is not None else self.distance * 60 / self.duration / self.cadence
 
 
 def track_xy(distance, straight, radius, bearing):
@@ -110,6 +117,11 @@ def validate_run(run):
         raise ValueError("duration 参数应为 1～86400 的整数秒")
     if isinstance(run.cadence, bool) or not isinstance(run.cadence, int) or not 30 <= run.cadence <= 300:
         raise ValueError("cadence 参数应为 30～300 的整数")
+    if run.step_length is not None:
+        value = run.step_length
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or not MIN_STEP_LENGTH <= value <= MAX_STEP_LENGTH):
+            raise ValueError(f"步幅应为 {MIN_STEP_LENGTH:g}～{MAX_STEP_LENGTH:g} 米/步，或留空自动计算")
     if not isinstance(run.start, datetime):
         raise ValueError("start 参数应为日期时间")
 
@@ -120,6 +132,7 @@ def generate_fit(run, destination, progress=lambda _: None):
     start_ts = int(run.start.timestamp() * 1000)
     end_ts = start_ts + run.duration * 1000
     speed = run.distance / run.duration
+    step_length_mm = run.effective_step_length * 1000
     # FIT uses strides/min (two steps), including fractional cadence for odd spm.
     rpm = run.cadence / 2
     whole, fraction = math.floor(rpm), rpm % 1
@@ -143,7 +156,7 @@ def generate_fit(run, destination, progress=lambda _: None):
         record.position_lat, record.position_long = lat, lon
         record.distance, record.speed = distance, speed
         record.cadence, record.fractional_cadence = whole, fraction
-        record.step_length = speed * 60 / run.cadence * 1000
+        record.step_length = step_length_mm
         record.heart_rate, record.power, record.stance_time = heart_rate, power, stance
         record.altitude = 20.0
         builder.add(record)
@@ -163,7 +176,7 @@ def generate_fit(run, destination, progress=lambda _: None):
         summary.avg_cadence = summary.max_cadence = whole
         summary.avg_fractional_cadence = summary.max_fractional_cadence = fraction
         summary.total_strides = round(rpm * run.duration / 60)
-        summary.avg_step_length = speed * 60 / run.cadence * 1000
+        summary.avg_step_length = step_length_mm
         summary.avg_heart_rate = summary.max_heart_rate = heart_rate
         summary.avg_power, summary.avg_stance_time = power, stance
         summary.total_calories = round(run.distance / 1000 * 70 * 1.036)
@@ -186,7 +199,7 @@ def generate_fit(run, destination, progress=lambda _: None):
 class FITGeneratorGUI:
     def __init__(self, root):
         self.root = root
-        root.title(APP_NAME)
+        root.title(f"{APP_NAME} v{VERSION}")
         root.configure(bg=BG)
         width = min(1120, root.winfo_screenwidth() - 70)
         height = min(900, root.winfo_screenheight() - 100)
@@ -200,7 +213,7 @@ class FITGeneratorGUI:
         self.map_picker = None
         self.fields = {}
         now = datetime.now()
-        defaults = dict(distance="5.00", duration="30", cadence="170", count="1", interval="24",
+        defaults = dict(distance="5.00", duration="30", cadence="170", step_length="", count="1", interval="24",
                         date=now.strftime("%Y-%m-%d"), time=now.strftime("%H:%M"),
                         lat="", lon="", source=SOURCES[0], bearing="0",
                         straight="84.39", radius="36.8",
@@ -208,7 +221,7 @@ class FITGeneratorGUI:
         self.v = {key: tk.StringVar(value=value) for key, value in defaults.items()}
         self._styles()
         self._build()
-        for key in ("distance", "duration", "cadence", "straight", "radius", "bearing", "lat", "lon", "source"):
+        for key in ("distance", "duration", "cadence", "step_length", "straight", "radius", "bearing", "lat", "lon", "source"):
             self.v[key].trace_add("write", self._schedule_preview)
         self.preview_job = None
         self.refresh_preview()
@@ -236,7 +249,10 @@ class FITGeneratorGUI:
     def _build(self):
         header = tk.Frame(self.root, bg=INK, padx=28, pady=17)
         header.pack(fill="x")
-        tk.Label(header, text=APP_NAME, bg=INK, fg="white", font=("Microsoft YaHei UI", 23, "bold")).pack(anchor="w")
+        title_row = tk.Frame(header, bg=INK)
+        title_row.pack(fill="x")
+        tk.Label(title_row, text=APP_NAME, bg=INK, fg="white", font=("Microsoft YaHei UI", 23, "bold")).pack(side="left")
+        ttk.Button(title_row, text="操作说明", command=self.open_user_guide).pack(side="right")
         tk.Label(header, text="————Natsume", bg=INK, fg="#bacaf0", font=("Microsoft YaHei UI", 11)).pack(anchor="w", pady=(3, 0))
         footer = tk.Frame(self.root, bg=BG, padx=22, pady=12)
         footer.pack(side="bottom", fill="x")
@@ -306,7 +322,7 @@ class FITGeneratorGUI:
         form.columnconfigure(1, weight=1)
         row = 0
         for section, fields in [
-            ("01  运动数据", [("距离（km）", "distance"), ("时长（分钟）", "duration"), ("平均步频（步/分钟）", "cadence")]),
+            ("01  运动数据", [("距离（km）", "distance"), ("时长（分钟）", "duration"), ("平均步频（步/分钟）", "cadence"), ("步幅（米/步，留空自动）", "step_length")]),
             ("02  跑道与坐标", [("坐标来源", "source"), ("中心纬度", "lat"), ("中心经度", "lon"), ("方位角（正北顺时针°）", "bearing"), ("单段直道长度（米）", "straight"), ("弯道半径（米）", "radius")]),
             ("03  时间与导出", [("开始日期（年-月-日）", "date"), ("开始时间（时:分）", "time"), ("生成份数", "count"), ("每次间隔（小时）", "interval"), ("保存目录", "output")])]:
             tk.Label(form, text=section, bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 10))
@@ -320,7 +336,10 @@ class FITGeneratorGUI:
                 widget.grid(row=row, column=1, sticky="ew", pady=6)
                 self.fields[key] = widget
                 row += 1
-            if section.startswith("02"):
+            if section.startswith("01"):
+                ttk.Label(form, text="例如 0.80 = 80 厘米/步；留空按距离、时长和步频计算。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
+                row += 1
+            elif section.startswith("02"):
                 ttk.Label(form, text="填写操场中心，不是入口；尺寸按实际跑道填写。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
                 row += 1
         ttk.Button(form, text="选择保存文件夹…", command=self.choose_output).grid(row=row, column=1, sticky="e", pady=8)
@@ -332,7 +351,7 @@ class FITGeneratorGUI:
 
     def _number(self, key, low, high):
         label = {"lat": "纬度", "lon": "经度", "distance": "距离", "duration": "时长",
-                 "cadence": "平均步频", "straight": "直道长度", "radius": "弯道半径",
+                 "cadence": "平均步频", "step_length": "步幅（米/步）", "straight": "直道长度", "radius": "弯道半径",
                  "bearing": "方位角", "interval": "时间间隔"}.get(key, key)
         try:
             value = float(self.v[key].get())
@@ -341,6 +360,17 @@ class FITGeneratorGUI:
         if not math.isfinite(value) or not low <= value <= high:
             raise ValueError(f"{label}：允许范围 {low:g}～{high:g}")
         return value
+
+    def _custom_step_length(self):
+        if not self.v["step_length"].get().strip():
+            return None
+        return self._number("step_length", MIN_STEP_LENGTH, MAX_STEP_LENGTH)
+
+    def _step_length_summary(self, distance, duration, cadence):
+        custom = self._custom_step_length()
+        step_length = custom if custom is not None else distance * 60 / duration / cadence
+        mode = "自定义" if custom is not None else "自动"
+        return f"平均步幅   {step_length:.4f} 米/步（{mode}）"
 
     def location(self):
         lat, lon = self._number("lat", -85, 85), self._number("lon", -180, 180)
@@ -371,7 +401,8 @@ class FITGeneratorGUI:
             d, t = self._number("distance", 0.001, 1000), self._number("duration", 1/60, 1440)
             cadence = self._number("cadence", 30, 300)
             pace = round(t * 60 / d)
-            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈")
+            step_length = self._step_length_summary(d * 1000, t * 60, cadence)
+            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈")
         except ValueError as error:
             self.metrics.set(str(error))
         try:
@@ -398,10 +429,11 @@ class FITGeneratorGUI:
             t = self._number('duration',1/60,1440)
             cadence = self._number('cadence',30,300)
             pace = round(t*60/(self.route.length/1000))
-            self.metrics.set(f'GPX 距离   {self.route.length/1000:.3f} km\n平均配速   {pace//60}′{pace%60:02d}″ /km\n平均步频   {cadence:g} 步/分钟')
+            step_length = self._step_length_summary(self.route.length, t * 60, cadence)
+            self.metrics.set(f'GPX 距离   {self.route.length/1000:.3f} km\n平均配速   {pace//60}′{pace%60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}')
         except ValueError as error:
             self.metrics.set(str(error))
-        self.location_note.set(f'{self.route.name}\n{len(self.route.points)} 个原始点 · 保留原路线\n距离按路线计算，时间和步频按当前输入生成。')
+        self.location_note.set(f'{self.route.name}\n{len(self.route.points)} 个原始点 · 保留原路线\n距离按路线计算，时间、步频和步幅按当前设置生成。')
 
     def import_gpx(self):
         if self.busy:
@@ -440,7 +472,7 @@ class FITGeneratorGUI:
         for key in ('distance','source','lat','lon','bearing','straight','radius'):
             self.fields[key].configure(state='disabled')
         self.refresh_preview()
-        self.status.set('GPX 原路线已载入，可设置时长与步频')
+        self.status.set('GPX 原路线已载入，可设置时长、步频与步幅')
 
     def clear_gpx(self):
         if self.busy:
@@ -459,6 +491,13 @@ class FITGeneratorGUI:
         folder = filedialog.askdirectory(parent=self.root)
         if folder:
             self.v["output"].set(folder)
+
+    def open_user_guide(self):
+        path = WEB_ROOT / "user-guide.html"
+        if not path.is_file():
+            messagebox.showerror("操作说明", "内置说明文件缺失，请重新下载完整版本。", parent=self.root)
+            return
+        webbrowser.open(path.resolve().as_uri())
 
     def open_output(self):
         path = Path(self.v["output"].get().strip())
@@ -505,7 +544,7 @@ class FITGeneratorGUI:
             raise ValueError("平均步频请填写整数（步/分钟）")
         start = datetime.strptime(self.v["date"].get() + " " + self.v["time"].get(), "%Y-%m-%d %H:%M")
         return Run(distance, round(duration), int(cadence), lat, lon,
-                   0 if self.route else self._number("bearing", 0, 360), 84.39 if self.route else self._number("straight", 1, 1000), 36.8 if self.route else self._number("radius", 5, 300), start,self.route)
+                   0 if self.route else self._number("bearing", 0, 360), 84.39 if self.route else self._number("straight", 1, 1000), 36.8 if self.route else self._number("radius", 5, 300), start, self.route, self._custom_step_length())
 
     def start_generation(self):
         if self.busy:
@@ -540,7 +579,7 @@ class FITGeneratorGUI:
                 item = replace(run, start=run.start + timedelta(hours=i * interval))
                 filename = f"run_{item.start:%Y%m%d_%H%M%S}_{datetime.now():%H%M%S_%f}_{i+1}.fit"
                 generate_fit(item, output / filename, lambda p: self.events.put(("progress", (i + p) / count * 100)))
-                self.events.put(("log", f"已保存 {filename}\n平均步频 {run.cadence} 步/分钟"))
+                self.events.put(("log", f"已保存 {filename}\n平均步频 {run.cadence} 步/分钟 · 步幅 {run.effective_step_length:.4f} 米/步"))
             self.events.put(("done", f"已生成 {count} 份 FIT 文件"))
         except Exception as error:
             self.events.put(("error", str(error)))
@@ -609,8 +648,16 @@ if __name__ == "__main__":
             root.withdraw()
             app = FITGeneratorGUI(root)
             root.update()
+            guide = (WEB_ROOT / "user-guide.html").read_text(encoding="utf-8")
+            assert "v2.3.0" in guide and "GPX" in guide and "批量导出" in guide and "常见问题" in guide
             lat, lon = to_wgs84(30.58, 114.33, SOURCES[0])
-            sample = Run(400, 120, 171, lat, lon, 62.5, 84.39, 36.8, datetime(2026, 9, 14, 8))
+            for key, value in dict(distance="0.4", duration="2", cadence="171", lat=str(lat), lon=str(lon),
+                                   source=SOURCES[1], step_length="0.8").items():
+                app.v[key].set(value)
+            app.refresh_preview()
+            assert "0.8000" in app.metrics.get() and "自定义" in app.metrics.get()
+            sample = app.read_run()
+            assert sample.step_length == 0.8
             path = folder / "runtime-test.fit"
             generate_fit(sample, path)
             decoded = FitFile.from_file(str(path))
@@ -618,6 +665,24 @@ if __name__ == "__main__":
             session = next(m for m in messages if isinstance(m, SessionMessage))
             assert (session.avg_cadence + session.avg_fractional_cadence) * 2 == 171
             assert session.total_distance == 400
+            for message in messages:
+                if isinstance(message, RecordMessage):
+                    assert message.step_length == 800
+                elif isinstance(message, (LapMessage, SessionMessage)):
+                    assert message.avg_step_length == 800
+            for invalid in ("0", "-0.8", "nan", "6.51", "abc"):
+                app.v["step_length"].set(invalid)
+                try:
+                    app.read_run()
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"Invalid step length accepted: {invalid}")
+            app.v["step_length"].set(" ")
+            assert app.read_run().step_length is None
+            app.refresh_preview()
+            assert "自动" in app.metrics.get()
+            app.v["step_length"].set("0.8")
             gpx = folder / 'runtime-test.gpx'
             gpx.write_text('<gpx><trk><trkseg><trkpt lat="30.58" lon="114.33"/><trkpt lat="30.581" lon="114.33"/><trkpt lat="30.581" lon="114.331"/></trkseg></trk></gpx>',encoding='utf8')
             app.gpx_routes = load_gpx(gpx)
@@ -627,6 +692,10 @@ if __name__ == "__main__":
             routed = app.read_run()
             generate_fit(routed,folder/'runtime-route.fit')
             assert routed.route is not None and str(app.fields['distance'].cget('state'))=='disabled'
+            assert routed.step_length == 0.8 and str(app.fields['step_length'].cget('state')) == 'normal'
+            route_messages = [r.message for r in FitFile.from_file(str(folder/'runtime-route.fit')).records if not r.is_definition]
+            assert all(m.step_length == 800 for m in route_messages if isinstance(m, RecordMessage))
+            assert all(m.avg_step_length == 800 for m in route_messages if isinstance(m, (LapMessage, SessionMessage)))
             from urllib.request import urlopen
             picker = MapPicker({'route':{'name':'test'}},lambda value:[],lambda value:True)
             try:
@@ -636,7 +705,9 @@ if __name__ == "__main__":
                     assert len(response.read())>100000
             finally:
                 picker.close()
-            result = {"ok": True, "title": root.title(), "cadence": 171, "distance": session.total_distance, 'gpx_distance':routed.distance, 'bundled_map':True}
+            result = {"ok": True, "title": root.title(), "cadence": 171, "distance": session.total_distance,
+                      "step_length_m": sample.step_length, "gpx_distance": routed.distance,
+                      "bundled_map": True, "bundled_user_guide": True, "version": VERSION}
             root.destroy()
         except Exception:
             import traceback

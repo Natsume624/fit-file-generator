@@ -96,6 +96,11 @@ public final class MainActivity extends Activity {
         title.setPadding(0, dp(8), 0, dp(6));
         hero.addView(title);
         hero.addView(text("本机生成 · 无需账号 · 直接保存到手机", 13, 0xffc6d2df, Typeface.NORMAL));
+        Button help = secondaryButton(getString(R.string.user_guide));
+        help.setOnClickListener(v -> startActivity(new Intent(this, UserGuideActivity.class)));
+        LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(-2, -2);
+        helpParams.setMargins(0, dp(10), 0, 0);
+        hero.addView(help, helpParams);
         page.addView(hero);
 
         ScrollView scroll = new ScrollView(this);
@@ -123,6 +128,11 @@ public final class MainActivity extends Activity {
         addField(movement, "距离", "distance", "km", "5.00", true);
         addField(movement, "时长", "duration", "分钟", "30", true);
         addField(movement, "平均步频", "cadence", "步/分钟", "170", true);
+        addField(movement, "步幅（留空自动）", "step_length", "米/步", "", true);
+        fields.get("step_length").setHint("例如 0.80 = 80 厘米/步");
+        TextView stepNote = text("留空按距离、时长和步频计算；填写后按自定义步幅导出。", 12, muted, Typeface.NORMAL);
+        stepNote.setPadding(0, dp(8), 0, 0);
+        movement.addView(stepNote);
         content.addView(movement);
 
         LinearLayout track = card();
@@ -276,7 +286,8 @@ public final class MainActivity extends Activity {
                 double cadence = number("cadence");
                 long pace = Math.round(duration * 60 / (currentRoute.length() / 1000));
                 metrics.setText(getString(R.string.route_metrics_summary,
-                        currentRoute.length() / 1000, pace / 60, pace % 60, Math.round(cadence)));
+                        currentRoute.length() / 1000, pace / 60, pace % 60, Math.round(cadence))
+                        + "\n" + stepLengthSummary(currentRoute.length(), duration, cadence));
                 return;
             }
             double distance = number("distance");
@@ -289,10 +300,24 @@ public final class MainActivity extends Activity {
             double perimeter = 2 * straight + 2 * Math.PI * radius;
             long pace = Math.round(duration * 60 / distance);
             metrics.setText(getString(R.string.metrics_summary,
-                    pace / 60, pace % 60, Math.round(cadence), perimeter, distance * 1000 / perimeter));
+                    pace / 60, pace % 60, Math.round(cadence), perimeter, distance * 1000 / perimeter)
+                    + "\n" + stepLengthSummary(distance * 1000, duration, cadence));
         } catch (RuntimeException ignored) {
             metrics.setText("请检查输入数据");
         }
+    }
+
+    private Double customStepLength() {
+        if (value("step_length").isEmpty()) return null;
+        double length = number("step_length");
+        FitEncoder.validateStepLength(length);
+        return length;
+    }
+
+    private String stepLengthSummary(double distanceMeters, double durationMinutes, double cadence) {
+        Double custom = customStepLength();
+        double length = custom != null ? custom : distanceMeters / durationMinutes / cadence;
+        return getString(R.string.step_length_summary, length, custom != null ? "自定义" : "自动");
     }
 
     private FitEncoder.Run readRun() {
@@ -309,7 +334,7 @@ public final class MainActivity extends Activity {
                 currentRoute == null ? number("bearing") : 0,
                 currentRoute == null ? number("straight") : 84.39,
                 currentRoute == null ? number("radius") : 36.8,
-                start.atZone(ZoneId.systemDefault()), currentRoute);
+                start.atZone(ZoneId.systemDefault()), currentRoute, customStepLength());
     }
 
     private void chooseDestination() {

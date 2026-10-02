@@ -58,15 +58,46 @@ class GeneratorTests(unittest.TestCase):
                 self.assertEqual(len(summaries), 2)
                 for point in points:
                     self.assertEqual((point.cadence + point.fractional_cadence)*2, cadence)
+                    self.assertAlmostEqual(point.step_length, run.effective_step_length * 1000, delta=0.051)
                 for summary in summaries:
                     self.assertEqual((summary.avg_cadence+summary.avg_fractional_cadence)*2, cadence)
                     self.assertEqual(summary.total_distance, 1000)
                     self.assertEqual(summary.total_timer_time, 300)
+                    self.assertAlmostEqual(summary.avg_step_length, run.effective_step_length * 1000, delta=0.051)
                 self.assertEqual(points[-1].timestamp-points[0].timestamp, 300000)
                 distance = sum(Geodesic.WGS84.Inverse(a.position_lat,a.position_long,b.position_lat,b.position_long)["s12"] for a,b in zip(points,points[1:]))
                 self.assertLess(abs(distance-1000), 1)
                 with self.assertRaises(FileExistsError):
                     generate_fit(run, path)
+
+    def test_custom_step_length_roundtrip(self):
+        for length in [0.01, 0.8, 1.23456, 6.5]:
+            with self.subTest(step_length=length), TemporaryDirectory(dir=Path(__file__).parent) as temp:
+                run = replace(self.run, distance=5, duration=2, step_length=length)
+                path = Path(temp) / "custom.fit"
+                generate_fit(run, path)
+                messages = [r.message for r in FitFile.from_file(str(path)).records if not r.is_definition]
+                points = [m for m in messages if isinstance(m, RecordMessage)]
+                summaries = [m for m in messages if isinstance(m, (SessionMessage, LapMessage))]
+                self.assertEqual(len(points), 3)
+                self.assertEqual(len(summaries), 2)
+                for point in points:
+                    self.assertAlmostEqual(point.step_length, length * 1000, delta=0.051)
+                    self.assertEqual((point.cadence + point.fractional_cadence) * 2, run.cadence)
+                for summary in summaries:
+                    self.assertAlmostEqual(summary.avg_step_length, length * 1000, delta=0.051)
+                    self.assertEqual(summary.total_distance, run.distance)
+                    self.assertEqual(summary.total_timer_time, run.duration)
+                    self.assertEqual((summary.avg_cadence + summary.avg_fractional_cadence) * 2, run.cadence)
+
+    def test_generation_rejects_invalid_custom_step_length(self):
+        invalid = [0, -0.8, 0.009, 6.501, float('nan'), float('inf'), True, '0.8']
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / "invalid.fit"
+            for length in invalid:
+                with self.subTest(step_length=length), self.assertRaises(ValueError):
+                    generate_fit(replace(self.run, step_length=length), path)
+                self.assertFalse(path.exists())
 
     def test_generation_rejects_unsafe_resource_inputs(self):
         invalid = [

@@ -24,10 +24,20 @@ public final class FitEncoder {
             double straight,
             double radius,
             ZonedDateTime start,
-            Route route) {
+            Route route,
+            Double stepLengthMeters) {
         public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
                    double bearing, double straight, double radius, ZonedDateTime start) {
-            this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, null);
+            this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, null, null);
+        }
+
+        public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
+                   double bearing, double straight, double radius, ZonedDateTime start, Route route) {
+            this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, route, null);
+        }
+
+        public double effectiveStepLengthMeters() {
+            return stepLengthMeters != null ? stepLengthMeters : distanceMeters * 60 / durationSeconds / cadence;
         }
 
         public Run {
@@ -40,6 +50,7 @@ public final class FitEncoder {
             if (distanceMeters < 1 || distanceMeters > 1_000_000) throw new IllegalArgumentException("距离应为 0.001～1000 km");
             if (durationSeconds < 1 || durationSeconds > 86_400) throw new IllegalArgumentException("时长应为 1 秒～24 小时");
             if (cadence < 30 || cadence > 300) throw new IllegalArgumentException("平均步频应为 30～300 步/分钟");
+            validateStepLength(stepLengthMeters);
             if (latitude < -85 || latitude > 85) throw new IllegalArgumentException("纬度应为 -85～85");
             if (longitude < -180 || longitude > 180) throw new IllegalArgumentException("经度应为 -180～180");
             if (bearing < 0 || bearing > 360) throw new IllegalArgumentException("方向应为 0～360°");
@@ -47,6 +58,12 @@ public final class FitEncoder {
             if (radius < 5 || radius > 300) throw new IllegalArgumentException("弯道半径应为 5～300 米");
             if (start == null) throw new IllegalArgumentException("开始时间不能为空");
             if (distanceMeters / durationSeconds >= 65.535) throw new IllegalArgumentException("速度超出 FIT 文件允许范围");
+        }
+    }
+
+    static void validateStepLength(Double value) {
+        if (value != null && (!Double.isFinite(value) || value < 0.01 || value > 6.5)) {
+            throw new IllegalArgumentException("步幅应为 0.01～6.5 米/步，或留空自动计算");
         }
     }
 
@@ -61,7 +78,7 @@ public final class FitEncoder {
         int cadenceFraction = (run.cadence % 2) * 64;
         int heartRate = speed > 10.0 / 3 ? 165 : speed > 25.0 / 9 ? 150 : speed > 50.0 / 21 ? 135 : 125;
         int power = (int) Math.round(speed * 70 * 1.05);
-        int stepLength = (int) Math.round(speed * 60.0 / run.cadence * 10_000);
+        int stepLength = (int) Math.round(run.effectiveStepLengthMeters() * 10_000);
 
         definition(data, 0,
                 new Field(0, 1, ENUM), new Field(1, 2, UINT16),
@@ -118,7 +135,7 @@ public final class FitEncoder {
                 new Field(14, 2, UINT16), new Field(17, 1, UINT8),
                 new Field(18, 1, UINT8), new Field(19, 2, UINT16),
                 new Field(25, 1, ENUM), new Field(39, 1, ENUM),
-                new Field(79, 2, UINT16), new Field(80, 1, UINT8),
+                new Field(120, 2, UINT16), new Field(80, 1, UINT8),
                 new Field(81, 1, UINT8));
         header(data);
         u32(data, end); u32(data, start);
@@ -138,7 +155,7 @@ public final class FitEncoder {
                 new Field(9, 4, UINT32), new Field(14, 2, UINT16),
                 new Field(15, 2, UINT16), new Field(18, 1, UINT8),
                 new Field(19, 1, UINT8), new Field(20, 2, UINT16),
-                new Field(26, 2, UINT16), new Field(91, 2, UINT16),
+                new Field(26, 2, UINT16), new Field(134, 2, UINT16),
                 new Field(92, 1, UINT8), new Field(93, 1, UINT8));
         header(data);
         u32(data, end); u32(data, start);

@@ -33,5 +33,27 @@ public final class EncoderSmoke {
                 route.points().get(0).latitude(), route.points().get(0).longitude(), 0, 84.39, 36.8,
                 LocalDateTime.of(2026, 9, 14, 9, 0).atZone(ZoneId.of("Asia/Shanghai")), route);
         Files.write(Path.of(args[1]), FitEncoder.encode(routeRun));
+        if (args.length >= 4) {
+            FitEncoder.Run custom = new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                    run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, 0.8);
+            Files.write(Path.of(args[2]), FitEncoder.encode(custom));
+            FitEncoder.Run customRoute = new FitEncoder.Run(routeRun.distanceMeters(), routeRun.durationSeconds(), routeRun.cadence(),
+                    routeRun.latitude(), routeRun.longitude(), routeRun.bearing(), routeRun.straight(), routeRun.radius(), routeRun.start(), route, 0.8);
+            Files.write(Path.of(args[3]), FitEncoder.encode(customRoute));
+        }
+        for (double length : new double[]{0.01, 6.5}) {
+            FitEncoder.Run boundary = new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                    run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, length);
+            FitEncoder.encode(boundary);
+        }
+        for (double length : new double[]{0, -0.8, 0.009, 6.501, Double.NaN, Double.POSITIVE_INFINITY}) {
+            try {
+                new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                        run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, length);
+                throw new AssertionError("Invalid step length accepted: " + length);
+            } catch (IllegalArgumentException expected) {
+                // Invalid overrides must be rejected before encoding.
+            }
+        }
     }
 }

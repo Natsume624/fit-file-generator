@@ -23,5 +23,9 @@
             android:name=".MapActivity"
             android:exported="false"
             android:label="地图校准" />
+        <activity
+            android:name=".UserGuideActivity"
+            android:exported="false"
+            android:label="@string/user_guide" />
     </application>
 </manifest>

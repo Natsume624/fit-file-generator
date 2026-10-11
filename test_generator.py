@@ -10,7 +10,7 @@ from fit_tool.fit_file import FitFile
 from fit_tool.profile.messages.record_message import RecordMessage
 from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.messages.lap_message import LapMessage
-from main import Run, to_wgs84, SOURCES, track_xy, track_position, generate_fit
+from main import Run, to_wgs84, SOURCES, track_xy, varied_track_xy, track_position, generate_fit
 
 
 class GeneratorTests(unittest.TestCase):
@@ -43,6 +43,64 @@ class GeneratorTests(unittest.TestCase):
         rx, ry = track_xy(0, run.straight, run.radius, 90)
         self.assertAlmostEqual(rx, y)
         self.assertAlmostEqual(ry, -x)
+
+    def test_natural_track_is_bounded_continuous_and_different_each_lap(self):
+        run = replace(self.run, track_variation=3)
+        seed = int(run.start.timestamp())
+        def position(s, bearing=run.bearing):
+            return varied_track_xy(s, run.straight, run.radius, bearing, run.track_variation, seed)
+        for s in [run.perimeter * i / 80 for i in range(401)]:
+            self.assertLessEqual(math.dist(position(s), track_xy(s, run.straight, run.radius, run.bearing)), 3.000001)
+        laps = [[position(lap * run.perimeter + run.perimeter * i / 40) for i in range(40)] for lap in range(3)]
+        for a, b in zip(laps, laps[1:]):
+            self.assertGreater(max(math.dist(x, y) for x, y in zip(a, b)), 0.5)
+        for lap in range(3):
+            for boundary in [0, run.straight, run.straight + math.pi * run.radius,
+                             2 * run.straight + math.pi * run.radius, run.perimeter]:
+                s = lap * run.perimeter + boundary
+                self.assertLess(math.dist(position(s - 0.001), position(s + 0.001)), 0.0025)
+        x, y = position(123, 0)
+        rx, ry = position(123, 90)
+        self.assertAlmostEqual(rx, y)
+        self.assertAlmostEqual(ry, -x)
+        other = replace(run, start=datetime(2026, 9, 15, 8))
+        self.assertGreater(Geodesic.WGS84.Inverse(*track_position(run, 123), *track_position(other, 123))['s12'], .1)
+
+    def test_natural_track_small_radius_and_zero_mode(self):
+        for s in range(1000):
+            ideal = track_xy(s, 1, 5, 62.5)
+            self.assertEqual(varied_track_xy(s, 1, 5, 62.5, 0, 1), ideal)
+            varied = varied_track_xy(s, 1, 5, 62.5, 8, 1)
+            self.assertLessEqual(math.dist(ideal, varied), 1.500001)
+
+    def test_natural_fit_preserves_metrics_and_has_no_position_jumps(self):
+        run = replace(self.run, distance=3010, duration=1068, track_variation=3, step_length=.8)
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / 'natural.fit'
+            generate_fit(run, path)
+            messages = [r.message for r in FitFile.from_file(str(path)).records if not r.is_definition]
+            points = [m for m in messages if isinstance(m, RecordMessage)]
+            summaries = [m for m in messages if isinstance(m, (LapMessage, SessionMessage))]
+            lengths = [Geodesic.WGS84.Inverse(a.position_lat, a.position_long, b.position_lat, b.position_long)['s12']
+                       for a, b in zip(points, points[1:])]
+            self.assertLess(max(lengths), run.distance / run.duration * 1.2)
+            self.assertGreater(min(lengths), run.distance / run.duration * .8)
+            self.assertLess(abs(sum(lengths) - run.distance), run.distance * .02)
+            for point, distance in [(points[0], 0), (points[-1], run.distance)]:
+                self.assertLess(Geodesic.WGS84.Inverse(point.position_lat, point.position_long, *track_position(run, distance))['s12'], .02)
+            for summary in summaries:
+                self.assertEqual(summary.total_distance, 3010)
+                self.assertEqual(summary.total_timer_time, 1068)
+                self.assertEqual(summary.avg_step_length, 800)
+                self.assertEqual((summary.avg_cadence + summary.avg_fractional_cadence) * 2, 171)
+
+    def test_generation_rejects_invalid_track_variation(self):
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / 'invalid.fit'
+            for value in [-.1, 8.01, float('nan'), float('inf'), True, '3']:
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    generate_fit(replace(self.run, track_variation=value), path)
+                self.assertFalse(path.exists())
 
     def test_fit_roundtrip_cadence_and_distance(self):
         for cadence in [170, 171, 300]:

@@ -6,6 +6,7 @@ from fit_tool.fit_file import FitFile
 from fit_tool.profile.messages.lap_message import LapMessage
 from fit_tool.profile.messages.record_message import RecordMessage
 from fit_tool.profile.messages.session_message import SessionMessage
+from geographiclib.geodesic import Geodesic
 
 
 def verify(path, cadence, custom_length_mm=None):
@@ -29,8 +30,29 @@ def verify(path, cadence, custom_length_mm=None):
     print(f"{path.name}: OK ({len(records)} records, {session.avg_step_length} mm/step)")
 
 
+def verify_natural(path):
+    # Independent FIT decoding also checks the Java/Python geometry stays in sync.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from datetime import datetime, timezone
+    from main import Run, track_position
+    messages = [r.message for r in FitFile.from_file(str(path)).records if not r.is_definition]
+    points = [m for m in messages if isinstance(m, RecordMessage)]
+    run = Run(5000, 1800, 171, 30.58, 114.33, 62.5, 84.39, 36.8,
+              datetime(2026, 9, 14, 0, tzinfo=timezone.utc), step_length=.8, track_variation=3)
+    for index, point in enumerate(points):
+        expected = track_position(run, run.distance * index / run.duration)
+        assert Geodesic.WGS84.Inverse(point.position_lat, point.position_long, *expected)['s12'] < .02
+    lengths = [Geodesic.WGS84.Inverse(a.position_lat, a.position_long, b.position_lat, b.position_long)['s12']
+               for a, b in zip(points, points[1:])]
+    assert max(lengths) < run.distance / run.duration * 1.2
+    assert abs(sum(lengths) - run.distance) < run.distance * .02
+    print(f"{path.name}: natural geometry OK (GPS polyline {sum(lengths):.2f} m)")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        raise SystemExit("Usage: verify_encoder.py auto.fit route.fit custom.fit route-custom.fit")
-    for path, cadence, custom in zip(sys.argv[1:], (171, 170, 171, 170), (None, None, 800, 800)):
+    if len(sys.argv) not in (5, 6):
+        raise SystemExit("Usage: verify_encoder.py auto.fit route.fit custom.fit route-custom.fit [natural.fit]")
+    for path, cadence, custom in zip(sys.argv[1:], (171, 170, 171, 170, 171), (None, None, 800, 800, 800)):
         verify(Path(path), cadence, custom)
+    if len(sys.argv) == 6:
+        verify_natural(Path(sys.argv[5]))

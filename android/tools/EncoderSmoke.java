@@ -33,6 +33,29 @@ public final class EncoderSmoke {
                 route.points().get(0).latitude(), route.points().get(0).longitude(), 0, 84.39, 36.8,
                 LocalDateTime.of(2026, 9, 14, 9, 0).atZone(ZoneId.of("Asia/Shanghai")), route);
         Files.write(Path.of(args[1]), FitEncoder.encode(routeRun));
+        FitEncoder.Run natural = new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, 0.8, 3);
+        if (args.length >= 5) Files.write(Path.of(args[4]), FitEncoder.encode(natural));
+        double perimeter = 2 * run.straight() + 2 * Math.PI * run.radius();
+        for (double s : new double[]{0, run.straight(), run.straight() + Math.PI * run.radius(),
+                2 * run.straight() + Math.PI * run.radius(), perimeter, 2 * perimeter}) {
+            double[] a = FitEncoder.variedTrackXY(s - .001, run.straight(), run.radius(), run.bearing(), 3, run.start().toEpochSecond());
+            double[] b = FitEncoder.variedTrackXY(s + .001, run.straight(), run.radius(), run.bearing(), 3, run.start().toEpochSecond());
+            if (Math.hypot(a[0] - b[0], a[1] - b[1]) > .0025) throw new AssertionError("Position jump at track seam");
+        }
+        FitEncoder.Run variedRoute = new FitEncoder.Run(routeRun.distanceMeters(), routeRun.durationSeconds(), routeRun.cadence(),
+                routeRun.latitude(), routeRun.longitude(), 0, 84.39, 36.8, routeRun.start(), route, null, 8);
+        for (double s : new double[]{0, route.length() / 2, route.length()}) {
+            double[] a = FitEncoder.trackPosition(routeRun, s), b = FitEncoder.trackPosition(variedRoute, s);
+            if (a[0] != b[0] || a[1] != b[1]) throw new AssertionError("Variation modified GPX geometry");
+        }
+        for (double variation : new double[]{-1, 8.01, Double.NaN, Double.POSITIVE_INFINITY}) {
+            try {
+                new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                        run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, null, variation);
+                throw new AssertionError("Invalid variation accepted");
+            } catch (IllegalArgumentException expected) { }
+        }
         if (args.length >= 4) {
             FitEncoder.Run custom = new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
                     run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, 0.8);

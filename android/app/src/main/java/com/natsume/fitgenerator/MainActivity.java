@@ -181,6 +181,9 @@ public final class MainActivity extends Activity {
         addField(track, "跑道方向", "bearing", "°", "0", true);
         addField(track, "单段直道长度", "straight", "米", "84.39", true);
         addField(track, "弯道半径", "radius", "米", "36.8", true);
+        addField(track, "轨迹起伏（0 为规则跑道）", "track_variation", "米", "3", true);
+        TextView variationNote = text("默认 3 米，范围 0～8 米。平滑起伏模拟跑线与定位偏移；GPX 保留原路线。预览显示前 3 圈以内。", 12, muted, Typeface.NORMAL);
+        track.addView(variationNote);
         TextView note = text("请填写跑道中心而非入口。中国大陆地图应用显示的坐标可能经过偏移，请使用 WGS84 坐标。", 12, muted, Typeface.NORMAL);
         note.setLineSpacing(dp(2), 1f);
         note.setPadding(0, dp(9), 0, 0);
@@ -268,13 +271,13 @@ public final class MainActivity extends Activity {
 
     private void showDate(EditText field) {
         LocalDate current = LocalDate.parse(field.getText(), DATE);
-        new DatePickerDialog(this, (view, year, month, day) -> field.setText(LocalDate.of(year, month + 1, day).format(DATE)),
+        new DatePickerDialog(this, (view, year, month, day) -> { field.setText(LocalDate.of(year, month + 1, day).format(DATE)); updatePreview(); },
                 current.getYear(), current.getMonthValue() - 1, current.getDayOfMonth()).show();
     }
 
     private void showTime(EditText field) {
         LocalTime current = LocalTime.parse(field.getText(), TIME);
-        new TimePickerDialog(this, (view, hour, minute) -> field.setText(LocalTime.of(hour, minute).format(TIME)),
+        new TimePickerDialog(this, (view, hour, minute) -> { field.setText(LocalTime.of(hour, minute).format(TIME)); updatePreview(); },
                 current.getHour(), current.getMinute(), true).show();
     }
 
@@ -296,12 +299,17 @@ public final class MainActivity extends Activity {
             double straight = number("straight");
             double radius = number("radius");
             double bearing = number("bearing");
-            preview.setTrack(straight, radius, bearing);
+            double variation = number("track_variation");
+            FitEncoder.validateTrackVariation(variation);
+            LocalDateTime start = LocalDateTime.of(LocalDate.parse(value("date"), DATE), LocalTime.parse(value("time"), TIME));
+            preview.setTrack(straight, radius, bearing, distance * 1000, variation,
+                    start.atZone(ZoneId.systemDefault()).toEpochSecond());
             double perimeter = 2 * straight + 2 * Math.PI * radius;
             long pace = Math.round(duration * 60 / distance);
             metrics.setText(getString(R.string.metrics_summary,
                     pace / 60, pace % 60, Math.round(cadence), perimeter, distance * 1000 / perimeter)
-                    + "\n" + stepLengthSummary(distance * 1000, duration, cadence));
+                    + "\n" + stepLengthSummary(distance * 1000, duration, cadence)
+                    + "\n轨迹模式   " + (variation == 0 ? "规则跑道" : "自然起伏（上限 " + format(Math.min(variation, radius * 0.3), 1) + " 米）"));
         } catch (RuntimeException ignored) {
             metrics.setText("请检查输入数据");
         }
@@ -334,7 +342,8 @@ public final class MainActivity extends Activity {
                 currentRoute == null ? number("bearing") : 0,
                 currentRoute == null ? number("straight") : 84.39,
                 currentRoute == null ? number("radius") : 36.8,
-                start.atZone(ZoneId.systemDefault()), currentRoute, customStepLength());
+                start.atZone(ZoneId.systemDefault()), currentRoute, customStepLength(),
+                currentRoute == null ? number("track_variation") : 0);
     }
 
     private void chooseDestination() {
@@ -512,7 +521,7 @@ public final class MainActivity extends Activity {
     private void selectRoute(Route route) {
         currentRoute = route;
         fields.get("distance").setText(format(route.length() / 1000, 6));
-        for (String key : new String[]{"distance", "latitude", "longitude", "bearing", "straight", "radius"}) fields.get(key).setEnabled(false);
+        for (String key : new String[]{"distance", "latitude", "longitude", "bearing", "straight", "radius", "track_variation"}) fields.get(key).setEnabled(false);
         locateButton.setEnabled(false);
         routeNote.setVisibility(View.VISIBLE);
         routeNote.setText(getString(R.string.route_note, route.name(), route.points().size()));
@@ -524,7 +533,7 @@ public final class MainActivity extends Activity {
         currentRoute = null; routes.clear();
         segmentSpinner.setAdapter(null); segmentSpinner.setVisibility(View.GONE);
         routeNote.setVisibility(View.GONE); clearGpxButton.setEnabled(false);
-        for (String key : new String[]{"distance", "latitude", "longitude", "bearing", "straight", "radius"}) fields.get(key).setEnabled(true);
+        for (String key : new String[]{"distance", "latitude", "longitude", "bearing", "straight", "radius", "track_variation"}) fields.get(key).setEnabled(true);
         locateButton.setEnabled(true);
         fields.get("distance").setText(R.string.default_distance);
         status.setText("已切回标准跑道");

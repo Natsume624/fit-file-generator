@@ -25,12 +25,13 @@ from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.profile_type import Event, EventType, FileType, Manufacturer, Sport, SubSport
 
 APP_NAME = ".fit文件生成器"
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
 MAX_BATCH_RECORDS = 500_000
 MIN_STEP_LENGTH = 0.01
 MAX_STEP_LENGTH = 6.5
+MAX_TRACK_VARIATION = 8.0
 
 
 def to_wgs84(lat, lon, source):
@@ -63,6 +64,7 @@ class Run:
     start: datetime
     route: Route | None = None
     step_length: float | None = None  # Metres per step; None keeps automatic calculation.
+    track_variation: float = 0.0  # Maximum lateral deviation in metres; GPX is never altered.
 
     @property
     def perimeter(self):
@@ -91,10 +93,58 @@ def track_xy(distance, straight, radius, bearing):
     return x * math.cos(a) + y * math.sin(a), -x * math.sin(a) + y * math.cos(a)
 
 
+def _smooth_noise(distance, wavelength, seed):
+    """Bounded spatial noise, continuous through lap seams and sampling changes."""
+    cell = math.floor(distance / wavelength)
+    t = distance / wavelength - cell
+    blend = t * t * t * (t * (t * 6 - 15) + 10)
+
+    def value(index):
+        # Explicit uint32 arithmetic is shared with the Android implementation.
+        n = (index + seed) & 0xffffffff
+        n = ((n ^ (n >> 16)) * 0x7feb352d) & 0xffffffff
+        n = ((n ^ (n >> 15)) * 0x846ca68b) & 0xffffffff
+        n ^= n >> 16
+        return n / 0xffffffff * 2 - 1
+
+    left, right = value(cell), value(cell + 1)
+    return left + (right - left) * blend
+
+
+def varied_track_xy(distance, straight, radius, bearing, variation, seed):
+    """Add smooth outward/inward offsets; never reset the noise each lap."""
+    if variation == 0:
+        return track_xy(distance, straight, radius, bearing)
+    x, y = track_xy(distance, straight, radius, 0)
+    arc = math.pi * radius
+    s = distance % (2 * straight + 2 * arc)
+    if s < straight:
+        nx, ny = -1, 0
+    elif s < straight + arc:
+        a = math.pi - (s - straight) / radius
+        nx, ny = math.cos(a), math.sin(a)
+    elif s < 2 * straight + arc:
+        nx, ny = 1, 0
+    else:
+        a = (s - 2 * straight - arc) / radius
+        nx, ny = math.cos(a), -math.sin(a)
+    # Large, medium and small variations keep straightaways subtly uneven.
+    # Restrict small tracks to prevent the offsets folding across a tight bend.
+    amplitude = min(variation, radius * 0.3)
+    offset = amplitude * (
+        0.55 * _smooth_noise(distance, 160, seed + 11)
+        + 0.30 * _smooth_noise(distance, 55, seed + 23)
+        + 0.15 * _smooth_noise(distance, 18, seed + 37))
+    x, y = x + nx * offset, y + ny * offset
+    a = math.radians(bearing)
+    return x * math.cos(a) + y * math.sin(a), -x * math.sin(a) + y * math.cos(a)
+
+
 def track_position(run, distance):
     if run.route is not None:
         return run.route.position(distance)
-    east, north = track_xy(distance, run.straight, run.radius, run.bearing)
+    east, north = varied_track_xy(distance, run.straight, run.radius, run.bearing,
+                                 run.track_variation, int(run.start.timestamp()))
     result = Geodesic.WGS84.Direct(run.lat, run.lon, math.degrees(math.atan2(east, north)), math.hypot(east, north))
     return result["lat2"], result["lon2"]
 
@@ -106,6 +156,7 @@ def validate_run(run):
     numeric_limits = {
         "distance": (1, 1_000_000), "lat": (-85, 85), "lon": (-180, 180),
         "bearing": (0, 360), "straight": (1, 1000), "radius": (5, 300),
+        "track_variation": (0, MAX_TRACK_VARIATION),
     }
     for name, (low, high) in numeric_limits.items():
         value = getattr(run, name)
@@ -216,12 +267,12 @@ class FITGeneratorGUI:
         defaults = dict(distance="5.00", duration="30", cadence="170", step_length="", count="1", interval="24",
                         date=now.strftime("%Y-%m-%d"), time=now.strftime("%H:%M"),
                         lat="", lon="", source=SOURCES[0], bearing="0",
-                        straight="84.39", radius="36.8",
+                        straight="84.39", radius="36.8", track_variation="3",
                         output=str(Path(os.path.expanduser("~")) / "Desktop" / "FIT文件"))
         self.v = {key: tk.StringVar(value=value) for key, value in defaults.items()}
         self._styles()
         self._build()
-        for key in ("distance", "duration", "cadence", "step_length", "straight", "radius", "bearing", "lat", "lon", "source"):
+        for key in ("distance", "duration", "cadence", "step_length", "straight", "radius", "bearing", "lat", "lon", "source", "track_variation", "date", "time"):
             self.v[key].trace_add("write", self._schedule_preview)
         self.preview_job = None
         self.refresh_preview()
@@ -279,7 +330,7 @@ class FITGeneratorGUI:
         right_canvas.bind('<Configure>',lambda e:right_canvas.itemconfigure(right_window,width=e.width))
         self.right_canvas = right_canvas
         tk.Label(right, text="跑道预览", bg=CARD, fg=INK, font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w")
-        tk.Label(right, text="北向朝上 · 蓝点为起点 · 按实际尺寸绘制", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(4, 10))
+        tk.Label(right, text="北向朝上 · 蓝点为起点 · 起伏模式显示前 3 圈以内", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(4, 10))
         self.preview = tk.Canvas(right, bg="#f4f7fc", highlightthickness=0, height=245)
         self.preview.pack(fill="x")
         self.preview.bind("<Configure>", lambda e: self._schedule_preview())
@@ -323,7 +374,7 @@ class FITGeneratorGUI:
         row = 0
         for section, fields in [
             ("01  运动数据", [("距离（km）", "distance"), ("时长（分钟）", "duration"), ("平均步频（步/分钟）", "cadence"), ("步幅（米/步，留空自动）", "step_length")]),
-            ("02  跑道与坐标", [("坐标来源", "source"), ("中心纬度", "lat"), ("中心经度", "lon"), ("方位角（正北顺时针°）", "bearing"), ("单段直道长度（米）", "straight"), ("弯道半径（米）", "radius")]),
+            ("02  跑道与坐标", [("坐标来源", "source"), ("中心纬度", "lat"), ("中心经度", "lon"), ("方位角（正北顺时针°）", "bearing"), ("单段直道长度（米）", "straight"), ("弯道半径（米）", "radius"), ("轨迹起伏（米，0 为规则跑道）", "track_variation")]),
             ("03  时间与导出", [("开始日期（年-月-日）", "date"), ("开始时间（时:分）", "time"), ("生成份数", "count"), ("每次间隔（小时）", "interval"), ("保存目录", "output")])]:
             tk.Label(form, text=section, bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=(10, 10))
             row += 1
@@ -340,7 +391,7 @@ class FITGeneratorGUI:
                 ttk.Label(form, text="例如 0.80 = 80 厘米/步；留空按距离、时长和步频计算。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
                 row += 1
             elif section.startswith("02"):
-                ttk.Label(form, text="填写操场中心，不是入口；尺寸按实际跑道填写。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
+                ttk.Label(form, text="填写操场中心；尺寸按实际跑道填写。轨迹起伏默认 3 米，范围 0～8 米；GPX 保留原路线。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
                 row += 1
         ttk.Button(form, text="选择保存文件夹…", command=self.choose_output).grid(row=row, column=1, sticky="e", pady=8)
 
@@ -384,25 +435,33 @@ class FITGeneratorGUI:
         try:
             straight, radius = self._number("straight", 1, 1000), self._number("radius", 5, 300)
             bearing = self._number("bearing", 0, 360)
+            variation = self._number("track_variation", 0, MAX_TRACK_VARIATION)
+            start = datetime.strptime(self.v["date"].get() + " " + self.v["time"].get(), "%Y-%m-%d %H:%M")
+            d, t = self._number("distance", 0.001, 1000), self._number("duration", 1/60, 1440)
             length = 2 * straight + 2 * math.pi * radius
-            points = [track_xy(length * i / 240, straight, radius, bearing) for i in range(241)]
+            ideal = [track_xy(length * i / 240, straight, radius, bearing) for i in range(241)]
+            preview_distance = min(d * 1000, length * 3) if variation else length
+            samples = max(2, math.ceil(preview_distance / length * 240))
+            points = [varied_track_xy(preview_distance * i / samples, straight, radius, bearing,
+                                     variation, int(start.timestamp())) for i in range(samples + 1)]
             w, h = max(280, self.preview.winfo_width()), 245
-            bound = max(max(abs(x), abs(y)) for x, y in points)
+            bound = max(max(abs(x), abs(y)) for x, y in ideal + points)
             scale = min(w - 60, h - 65) / (2 * bound)
             mapped = [(w / 2 + x * scale, h / 2 - y * scale + 8) for x, y in points]
+            ideal_mapped = [(w / 2 + x * scale, h / 2 - y * scale + 8) for x, y in ideal]
             self.preview.create_line(w / 2, 30, w / 2, h - 12, fill="#dbe3ef", dash=(3, 5))
             self.preview.create_line(20, h / 2 + 8, w - 20, h / 2 + 8, fill="#dbe3ef", dash=(3, 5))
-            self.preview.create_line(*[c for p in mapped for c in p], fill="#b7cdfc", width=12)
+            self.preview.create_line(*[c for p in ideal_mapped for c in p], fill="#b7cdfc", width=8)
             self.preview.create_line(*[c for p in mapped for c in p], fill=ACCENT, width=2)
             x, y = mapped[0]
             self.preview.create_oval(x-5, y-5, x+5, y+5, fill=ACCENT, outline="white", width=2)
-            self.preview.create_line(*mapped[3], *mapped[8], fill=INK, width=2, arrow="last")
+            self.preview.create_line(*mapped[min(3, samples)], *mapped[min(8, samples)], fill=INK, width=2, arrow="last")
             self.preview.create_text(w / 2, 15, text="N ↑", fill=MUTED)
-            d, t = self._number("distance", 0.001, 1000), self._number("duration", 1/60, 1440)
             cadence = self._number("cadence", 30, 300)
             pace = round(t * 60 / d)
             step_length = self._step_length_summary(d * 1000, t * 60, cadence)
-            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈")
+            mode = f"自然起伏（上限 {min(variation, radius * 0.3):g} 米）" if variation else "规则跑道"
+            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈\n轨迹模式   {mode}")
         except ValueError as error:
             self.metrics.set(str(error))
         try:
@@ -469,7 +528,7 @@ class FITGeneratorGUI:
             return
         self.route = self.gpx_routes[self.segment_choice.current()]
         self.v['distance'].set(f'{self.route.length/1000:.6f}')
-        for key in ('distance','source','lat','lon','bearing','straight','radius'):
+        for key in ('distance','source','lat','lon','bearing','straight','radius','track_variation'):
             self.fields[key].configure(state='disabled')
         self.refresh_preview()
         self.status.set('GPX 原路线已载入，可设置时长、步频与步幅')
@@ -481,7 +540,7 @@ class FITGeneratorGUI:
         self.gpx_routes = []
         self.segment_choice.configure(values=(),state='disabled')
         self.segment_choice.set('')
-        for key in ('distance','source','lat','lon','bearing','straight','radius'):
+        for key in ('distance','source','lat','lon','bearing','straight','radius','track_variation'):
             self.fields[key].configure(state='readonly' if key=='source' else 'normal')
         self.v['distance'].set('5.00')
         self.refresh_preview()
@@ -544,7 +603,8 @@ class FITGeneratorGUI:
             raise ValueError("平均步频请填写整数（步/分钟）")
         start = datetime.strptime(self.v["date"].get() + " " + self.v["time"].get(), "%Y-%m-%d %H:%M")
         return Run(distance, round(duration), int(cadence), lat, lon,
-                   0 if self.route else self._number("bearing", 0, 360), 84.39 if self.route else self._number("straight", 1, 1000), 36.8 if self.route else self._number("radius", 5, 300), start, self.route, self._custom_step_length())
+                   0 if self.route else self._number("bearing", 0, 360), 84.39 if self.route else self._number("straight", 1, 1000), 36.8 if self.route else self._number("radius", 5, 300), start, self.route, self._custom_step_length(),
+                   0 if self.route else self._number("track_variation", 0, MAX_TRACK_VARIATION))
 
     def start_generation(self):
         if self.busy:
@@ -649,7 +709,7 @@ if __name__ == "__main__":
             app = FITGeneratorGUI(root)
             root.update()
             guide = (WEB_ROOT / "user-guide.html").read_text(encoding="utf-8")
-            assert "v2.3.0" in guide and "GPX" in guide and "批量导出" in guide and "常见问题" in guide
+            assert f"v{VERSION}" in guide and "GPX" in guide and "批量导出" in guide and "常见问题" in guide
             lat, lon = to_wgs84(30.58, 114.33, SOURCES[0])
             for key, value in dict(distance="0.4", duration="2", cadence="171", lat=str(lat), lon=str(lon),
                                    source=SOURCES[1], step_length="0.8").items():
@@ -658,6 +718,11 @@ if __name__ == "__main__":
             assert "0.8000" in app.metrics.get() and "自定义" in app.metrics.get()
             sample = app.read_run()
             assert sample.step_length == 0.8
+            assert sample.track_variation == 3 and "自然起伏" in app.metrics.get()
+            app.v["track_variation"].set("0")
+            app.refresh_preview()
+            assert "规则跑道" in app.metrics.get() and app.read_run().track_variation == 0
+            app.v["track_variation"].set("3")
             path = folder / "runtime-test.fit"
             generate_fit(sample, path)
             decoded = FitFile.from_file(str(path))
@@ -692,6 +757,7 @@ if __name__ == "__main__":
             routed = app.read_run()
             generate_fit(routed,folder/'runtime-route.fit')
             assert routed.route is not None and str(app.fields['distance'].cget('state'))=='disabled'
+            assert routed.track_variation == 0 and str(app.fields['track_variation'].cget('state')) == 'disabled'
             assert routed.step_length == 0.8 and str(app.fields['step_length'].cget('state')) == 'normal'
             route_messages = [r.message for r in FitFile.from_file(str(folder/'runtime-route.fit')).records if not r.is_definition]
             assert all(m.step_length == 800 for m in route_messages if isinstance(m, RecordMessage))

@@ -32,10 +32,10 @@ jobs:
           python-version: "3.12"
       - name: Decode Android FIT records and summaries
         run: |
-          python -m pip install fit-tool==0.9.16
+          python -m pip install -r requirements.txt
           javac --release 17 -encoding UTF-8 -d android/smoke-classes android/app/src/main/java/com/natsume/fitgenerator/FitEncoder.java android/app/src/main/java/com/natsume/fitgenerator/Route.java android/app/src/main/java/com/natsume/fitgenerator/GpxParser.java android/tools/EncoderSmoke.java
-          java -cp android/smoke-classes com.natsume.fitgenerator.EncoderSmoke android-auto.fit android-route.fit android-custom.fit android-route-custom.fit
-          python android/tools/verify_encoder.py android-auto.fit android-route.fit android-custom.fit android-route-custom.fit
+          java -cp android/smoke-classes com.natsume.fitgenerator.EncoderSmoke android-auto.fit android-route.fit android-custom.fit android-route-custom.fit android-natural.fit
+          python android/tools/verify_encoder.py android-auto.fit android-route.fit android-custom.fit android-route-custom.fit android-natural.fit
       - name: Build and lint installable debug APK
         working-directory: android
         run: |

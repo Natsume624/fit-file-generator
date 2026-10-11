@@ -25,7 +25,13 @@ public final class FitEncoder {
             double radius,
             ZonedDateTime start,
             Route route,
-            Double stepLengthMeters) {
+            Double stepLengthMeters,
+            double trackVariationMeters) {
+        public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
+                   double bearing, double straight, double radius, ZonedDateTime start, Route route, Double stepLengthMeters) {
+            this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, route, stepLengthMeters, 0);
+        }
+
         public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
                    double bearing, double straight, double radius, ZonedDateTime start) {
             this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, null, null);
@@ -47,6 +53,7 @@ public final class FitEncoder {
             finite(bearing, "方向");
             finite(straight, "直道长度");
             finite(radius, "弯道半径");
+            validateTrackVariation(trackVariationMeters);
             if (distanceMeters < 1 || distanceMeters > 1_000_000) throw new IllegalArgumentException("距离应为 0.001～1000 km");
             if (durationSeconds < 1 || durationSeconds > 86_400) throw new IllegalArgumentException("时长应为 1 秒～24 小时");
             if (cadence < 30 || cadence > 300) throw new IllegalArgumentException("平均步频应为 30～300 步/分钟");
@@ -64,6 +71,12 @@ public final class FitEncoder {
     static void validateStepLength(Double value) {
         if (value != null && (!Double.isFinite(value) || value < 0.01 || value > 6.5)) {
             throw new IllegalArgumentException("步幅应为 0.01～6.5 米/步，或留空自动计算");
+        }
+    }
+
+    static void validateTrackVariation(double value) {
+        if (!Double.isFinite(value) || value < 0 || value > 8) {
+            throw new IllegalArgumentException("轨迹起伏应为 0～8 米，0 为规则跑道");
         }
     }
 
@@ -202,7 +215,8 @@ public final class FitEncoder {
 
     public static double[] trackXY(double distance, double straight, double radius, double bearing) {
         double arc = Math.PI * radius;
-        double s = distance % (2 * straight + 2 * arc);
+        double perimeter = 2 * straight + 2 * arc;
+        double s = ((distance % perimeter) + perimeter) % perimeter;
         double x, y;
         if (s < straight) {
             x = -radius; y = -straight / 2 + s;
@@ -219,12 +233,58 @@ public final class FitEncoder {
         return new double[]{x * Math.cos(angle) + y * Math.sin(angle), -x * Math.sin(angle) + y * Math.cos(angle)};
     }
 
+    private static double noiseValue(long index, long seed) {
+        long n = (index + seed) & 0xffffffffL;
+        n = ((n ^ (n >>> 16)) * 0x7feb352dL) & 0xffffffffL;
+        n = ((n ^ (n >>> 15)) * 0x846ca68bL) & 0xffffffffL;
+        n ^= n >>> 16;
+        return n / (double) 0xffffffffL * 2 - 1;
+    }
+
+    private static double smoothNoise(double distance, double wavelength, long seed) {
+        long cell = (long) Math.floor(distance / wavelength);
+        double t = distance / wavelength - cell;
+        double blend = t * t * t * (t * (t * 6 - 15) + 10);
+        double left = noiseValue(cell, seed), right = noiseValue(cell + 1, seed);
+        return left + (right - left) * blend;
+    }
+
+    /** Spatial, bounded variation; the noise continues across every lap seam. */
+    public static double[] variedTrackXY(double distance, double straight, double radius, double bearing,
+                                         double variation, long seed) {
+        if (variation == 0) return trackXY(distance, straight, radius, bearing);
+        double[] xy = trackXY(distance, straight, radius, 0);
+        double arc = Math.PI * radius;
+        double perimeter = 2 * straight + 2 * arc;
+        double s = ((distance % perimeter) + perimeter) % perimeter;
+        double nx, ny;
+        if (s < straight) {
+            nx = -1; ny = 0;
+        } else if (s < straight + arc) {
+            double a = Math.PI - (s - straight) / radius;
+            nx = Math.cos(a); ny = Math.sin(a);
+        } else if (s < 2 * straight + arc) {
+            nx = 1; ny = 0;
+        } else {
+            double a = (s - 2 * straight - arc) / radius;
+            nx = Math.cos(a); ny = -Math.sin(a);
+        }
+        double amplitude = Math.min(variation, radius * 0.3);
+        double offset = amplitude * (0.55 * smoothNoise(distance, 160, seed + 11)
+                + 0.30 * smoothNoise(distance, 55, seed + 23)
+                + 0.15 * smoothNoise(distance, 18, seed + 37));
+        double x = xy[0] + nx * offset, y = xy[1] + ny * offset;
+        double a = Math.toRadians(bearing);
+        return new double[]{x * Math.cos(a) + y * Math.sin(a), -x * Math.sin(a) + y * Math.cos(a)};
+    }
+
     static double[] trackPosition(Run run, double distance) {
         if (run.route != null) {
             Route.Point point = run.route.position(distance);
             return new double[]{point.latitude(), point.longitude()};
         }
-        double[] xy = trackXY(distance, run.straight, run.radius, run.bearing);
+        double[] xy = variedTrackXY(distance, run.straight, run.radius, run.bearing,
+                run.trackVariationMeters, run.start.toEpochSecond());
         return vincentyDirect(run.latitude, run.longitude, Math.toDegrees(Math.atan2(xy[0], xy[1])), Math.hypot(xy[0], xy[1]));
     }
 

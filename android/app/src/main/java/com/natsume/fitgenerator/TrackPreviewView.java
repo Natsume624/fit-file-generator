@@ -18,6 +18,9 @@ public final class TrackPreviewView extends View {
     private double straight = 84.39;
     private double radius = 36.8;
     private double bearing = 0;
+    private double distance = 400;
+    private double variation = 0;
+    private long seed = 0;
     private Route route;
 
     public TrackPreviewView(Context context) { this(context, null); }
@@ -37,11 +40,14 @@ public final class TrackPreviewView extends View {
         dot.setColor(0xff2563eb);
     }
 
-    public void setTrack(double straight, double radius, double bearing) {
+    public void setTrack(double straight, double radius, double bearing, double distance, double variation, long seed) {
         if (straight > 0 && radius > 0) {
             this.straight = straight;
             this.radius = radius;
             this.bearing = bearing;
+            this.distance = distance;
+            this.variation = variation;
+            this.seed = seed;
             this.route = null;
             invalidate();
         }
@@ -60,7 +66,7 @@ public final class TrackPreviewView extends View {
         canvas.drawLine(dp(14), cy, getWidth() - dp(14), cy, grid);
         if (route != null) { drawRoute(canvas, cx, cy); return; }
         double perimeter = 2 * straight + 2 * Math.PI * radius;
-        double extent = straight / 2 + radius;
+        double extent = straight / 2 + radius + Math.min(variation, radius * 0.3);
         float scale = (float) (Math.min(getWidth() - dp(48), getHeight() - dp(42)) / (2 * extent));
         path.reset();
         float firstX = 0, firstY = 0;
@@ -72,6 +78,18 @@ public final class TrackPreviewView extends View {
             else path.lineTo(x, y);
         }
         canvas.drawPath(path, halo);
+        if (variation > 0) {
+            double previewDistance = Math.min(distance, perimeter * 3);
+            int samples = Math.max(2, (int) Math.ceil(previewDistance / perimeter * 240));
+            path.reset();
+            for (int i = 0; i <= samples; i++) {
+                double[] point = FitEncoder.variedTrackXY(previewDistance * i / samples, straight, radius, bearing, variation, seed);
+                float x = cx + (float) point[0] * scale;
+                float y = cy - (float) point[1] * scale;
+                if (i == 0) { path.moveTo(x, y); firstX = x; firstY = y; }
+                else path.lineTo(x, y);
+            }
+        }
         canvas.drawPath(path, track);
         canvas.drawCircle(firstX, firstY, dp(5), dot);
     }

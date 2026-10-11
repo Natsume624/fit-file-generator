@@ -60,6 +60,9 @@ class RouteTests(unittest.TestCase):
         run=Run(route.length,100,171,0,0,0,84.39,36.8,datetime(2026,9,15,8),route)
         self.assertEqual(track_position(run,0),route.points[0])
         self.assertEqual(track_position(run,run.distance),route.points[-1])
+        varied = replace(run, track_variation=8)
+        for distance in [0, route.length / 3, route.length]:
+            self.assertEqual(track_position(varied, distance), track_position(run, distance))
         fit=Path(self.temp.name)/'route.fit'
         generate_fit(run,fit)
         messages=[r.message for r in FitFile.from_file(str(fit)).records if not r.is_definition]

@@ -8,6 +8,7 @@
  <label for="mapSource">地图底图</label><div class="search"><select id="mapSource"></select><button id="retryMap" type="button">重试底图</button></div>
  <form id="searchForm"><label for="query">查找学校 / 体育场 / 城市</label><div class="search"><input id="query" placeholder="例如：武汉 湖北大学" maxlength="120"><button id="searchButton">查找</button></div></form>
  <div id="results"></div>
+ <details><summary>搜索不可用？按坐标定位</summary><form id="coordinateForm"><label for="coordinateSource">输入坐标来源</label><select id="coordinateSource" name="source"><option value="gcj">高德 / 腾讯（GCJ-02）</option><option value="wgs">GPS / GPX（WGS84）</option></select><div class="pair"><label>纬度<input name="lat" type="number" min="-85" max="85" step="any" placeholder="例如 30.58" required></label><label>经度<input name="lon" type="number" min="-180" max="180" step="any" placeholder="例如 114.33" required></label></div><button type="submit">定位到坐标</button></form></details>
  <div id="editor">
   <h2>跑道轮廓</h2>
   <label for="bearing">方向 <output id="angleText">0°</output></label><input id="bearing" type="range" min="0" max="360" step="0.1" value="0">
@@ -18,9 +19,10 @@
  </div>
  <div id="routeInfo" hidden><h2>GPX 原始路线</h2><p id="routeName"></p><p>路线保持原经纬度，不拉伸、不自动闭合。返回桌面可选择其他轨迹段。</p></div>
  <p id="status" role="status" aria-live="polite">正在加载地图…</p>
- <details><summary>地图不清楚或加载失败？</summary><p>默认使用 Esri 影像，连接失败时自动尝试街道地图和 OpenStreetMap。也可手动切换或重试。影像拍摄时间、清晰度因地区而异。</p><p>地图与地点搜索需要联网。底图位置和原始 GPS 都可能存在误差。离线时可回桌面输入坐标或导入 GPX。</p></details>
+ <details><summary>地图不清楚或加载失败？</summary><p>默认使用国内高德影像，也可切换高德街道地图、Esri 或 OpenStreetMap。国内底图会自动转换显示坐标，导出仍为 WGS84。影像拍摄时间、清晰度因地区而异。</p><p>地图与地点搜索需要联网。底图位置和原始 GPS 都可能存在误差。离线时可回桌面输入坐标或导入 GPX。</p></details>
+ <details><summary>底图连接诊断</summary><pre id="mapDiagnostics"></pre><p>可选中并复制这些信息反馈；不包含轨迹或精确位置。</p></details>
  <div class="credits">底图来源见地图署名<br>地点搜索：Photon / Nominatim · OpenStreetMap<br>GPX 仅在本机处理，不上传轨迹文件。</div>
 </aside>
-<main><div id="map"></div><div class="map-badge">无需 API Key <span>·</span> WGS84 坐标</div><div id="offline" hidden>底图暂不可用 · 跑道仍可调整，或回桌面导入 GPX</div></main>
-<script src="vendor/leaflet.js"></script><script src="map-sources.js"></script><script src="map.js"></script>
+<main><div id="map"></div><div class="map-badge">地图校准 <span>·</span> 导出 WGS84</div><div id="offline" hidden>底图暂不可用 · 跑道仍可调整，或回桌面导入 GPX</div></main>
+<script src="vendor/leaflet.js"></script><script src="map-coordinates.js"></script><script src="map-sources.js"></script><script src="map-location.js"></script><script src="map.js"></script>
 </body></html>

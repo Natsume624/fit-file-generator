@@ -86,21 +86,21 @@ th { background: #f0f5fd; font-weight: 650; } tbody tr:nth-child(even) { backgro
 </div>
 </details></nav>
 <main><h1 id="fit">FIT 文件生成器完整操作说明</h1>
-<p>适用版本：<strong>v2.4.1</strong> · Windows 64 位与 Android 8.0 及以上版本</p>
+<p>适用版本：<strong>v2.4.2</strong> · Windows 64 位与 Android 8.0 及以上版本</p>
 <p>本应用根据你设置的运动参数和路线，在本机生成 <code>.fit</code> 文件。路线可以来自标准体育场跑道，也可以来自自己的 GPX 轨迹。生成文件不需要登录账号。</p>
 <h2 id="1">1. 下载、安装与打开说明</h2>
-<p>从本项目的 <a href="https://github.com/Natsume624/fit-file-generator/releases/tag/v2.4.1">v2.4.1 发布页</a> 下载文件。文件名里的版本号应与本说明一致。</p>
+<p>从本项目的 <a href="https://github.com/Natsume624/fit-file-generator/releases/tag/v2.4.2">v2.4.2 发布页</a> 下载文件。文件名里的版本号应与本说明一致。</p>
 <h3 id="windows">Windows</h3>
 <ol>
-<li>获取 <code>fit-file-generator-v2.4.1-windows-x64.exe</code>，放到一个方便找到的文件夹。</li>
+<li>获取 <code>fit-file-generator-v2.4.2-windows-x64.exe</code>，放到一个方便找到的文件夹。</li>
 <li>双击 EXE 即可运行，无需安装 Python，也无需安装器。</li>
 <li>主界面右上角的“操作说明”会在默认浏览器中打开内置说明，离线也能阅读。</li>
 <li>如果 Windows 提示发布者未知，先确认下载来自上述项目发布页，并用发布附件 <code>SHA256SUMS.txt</code> 核对文件。本版本 EXE 未做代码签名。</li>
 </ol>
-<p>校验示例：在 EXE 所在文件夹打开 PowerShell，运行 <code>Get-FileHash .\fit-file-generator-v2.4.1-windows-x64.exe -Algorithm SHA256</code>，将输出与校验文件中的同名记录比较。</p>
+<p>校验示例：在 EXE 所在文件夹打开 PowerShell，运行 <code>Get-FileHash .\fit-file-generator-v2.4.2-windows-x64.exe -Algorithm SHA256</code>，将输出与校验文件中的同名记录比较。</p>
 <h3 id="android">Android</h3>
 <ol>
-<li>获取 <code>fit-file-generator-v2.4.1-android.apk</code>，点击文件，按手机提示允许该下载来源安装应用。</li>
+<li>获取 <code>fit-file-generator-v2.4.2-android.apk</code>，点击文件，按手机提示允许该下载来源安装应用。</li>
 <li>安装后打开“FIT 文件生成器”。生成文件和导入 GPX 使用系统文件选择器，无需授予存储权限。</li>
 <li>主界面标题区的“操作说明”可打开内置说明；左上方“返回”按钮回到应用。</li>
 <li>只有点击“使用当前位置”时才需要定位权限；也可以直接通过地图或手动坐标设置跑道。</li>
@@ -209,8 +209,9 @@ th { background: #f0f5fd; font-weight: 650; } tbody tr:nth-child(even) { backgro
 <p>如果不使用在线地图，可以手动填写已知的准确坐标与跑道尺寸，再直接生成。</p>
 <h2 id="4">4. 地图校准与坐标来源</h2>
 <h3 id="_1">选择底图与加载失败时怎么办</h3>
-<p>默认底图为 <strong>Esri 卫星影像</strong>，可在“地图底图”切换为 Esri 街道地图或 OpenStreetMap。连接失败或 8 秒未加载到任何瓦片时会自动尝试备用底图；也可点击“重试底图”。选择底图只改变背景，跑道中心、尺寸、方向和 GPX 经纬度保持原值，统一使用 WGS84。</p>
-<p>底图需要联网，但不需要 API Key。影像拍摄时间、清晰度因地区而异，部分操场可能缺少细节。地点搜索先使用 Photon，失败或无结果时尝试 Nominatim；这两项服务都暂不可用时，仍可缩放地图寻找位置、返回主界面填写准确坐标，或导入 GPX。</p>
+<p>默认底图为 <strong>高德卫星影像（国内）</strong>，可在“地图底图”切换为高德街道地图、Esri 影像 / 街道地图或 OpenStreetMap。连接失败或 8 秒未加载到任何瓦片时会自动尝试备用底图；也可点击“重试底图”。高德底图在显示时自动投影为 GCJ-02，选点会自动返回 WGS84；切换底图保留跑道中心、尺寸、方向与 GPX 原坐标，FIT 仍导出 WGS84。</p>
+<p>底图需要联网，但不需要 API Key。影像拍摄时间、清晰度因地区而异，部分操场可能缺少细节。地点搜索先使用 Photon，失败或无结果时尝试 Nominatim；这两项服务都暂不可用时，可展开“搜索不可用？按坐标定位”，选择坐标来源后分别输入纬度、经度。高德 / 腾讯选择 GCJ-02，GPS / GPX 选择 WGS84。定位只移动视野，仍需在实际跑道中央点选并应用。</p>
+<p>所有底图仍加载失败时，可展开“底图连接诊断”，复制其中各来源的成功 / 失败计数反馈。这些信息不包含 GPX 轨迹或精确位置。也可返回主界面填写准确坐标或导入 GPX。</p>
 <h3 id="_2">中心、方向和尺寸怎么选</h3>
 <ul>
 <li><strong>中心</strong>是整个跑道几何形状的中心，不是校门、操场入口或跑道边缘。</li>
@@ -254,7 +255,7 @@ th { background: #f0f5fd; font-weight: 650; } tbody tr:nth-child(even) { backgro
 <h3 id="android_2">Android“使用当前位置”</h3>
 <p>点击按钮并授予定位权限后，应用读取设备最近一次可用位置。该位置可能来自之前的定位，且你所站的位置通常不是跑道中心；请在地图中确认并微调。若没有可用位置，先开启手机定位，或改用地图 / 手动输入。</p>
 <h3 id="_5">地图没有跑道细节怎么办</h3>
-<p>可切换 Esri 影像、街道地图和 OpenStreetMap，部分地区信息不完整或影像不够清晰。可以采用准确的手动数据，或导入自己记录的 GPX。地图搜索和瓦片需要联网；无法联网时，已知坐标的跑道生成和 GPX 导入仍可使用。</p>
+<p>可切换国内高德影像 / 街道地图、Esri 和 OpenStreetMap，部分地区信息不完整或影像不够清晰。可以采用准确的手动数据，或导入自己记录的 GPX。地图搜索和瓦片需要联网；无法联网时，已知坐标的跑道生成和 GPX 导入仍可使用。</p>
 <p>Windows 的地图校准页依赖应用保持运行。关闭应用后，旧地图页会失效；重新打开应用并点击地图按钮即可获得新的页面。</p>
 <h2 id="5-gpx">5. 导入 GPX 并沿原路线生成</h2>
 <p>GPX 是轨迹输入，FIT 是本应用的导出文件。导入 GPX 会使用路线几何信息；原文件的时间、心率和其他生理数据不会原样复制。</p>
@@ -371,7 +372,7 @@ th { background: #f0f5fd; font-weight: 650; } tbody tr:nth-child(even) { backgro
 <h3 id="_9">点击生成提示“请检查输入”</h3>
 <p>检查是否漏填跑道中心、日期或时间；确认数字中没有单位文字或中文小数点。步频必须是整数，时长必须换算成整秒。步幅可以留空，其他当前模式必填项需要完整填写。</p>
 <h3 id="_10">地图打开后空白、搜索失败或看不到跑道</h3>
-<p>先确认网络连接，并在“地图底图”切换 Esri 影像 / 街道地图 / OpenStreetMap，或点击“重试底图”。应用会自动尝试备用服务；底图和搜索都来自外部服务，可用性仍取决于当前网络。不需要 API Key。也可改用准确的手动坐标 / GPX。Windows 请保持应用运行，不要使用已关闭应用留下的旧地图页。</p>
+<p>先确认网络连接，并在“地图底图”切换国内高德影像 / 街道地图，或 Esri / OpenStreetMap，或点击“重试底图”。应用会自动尝试备用服务；底图和搜索都来自外部服务，可用性仍取决于当前网络。不需要 API Key。也可改用准确的手动坐标 / GPX。Windows 请保持应用运行，不要使用已关闭应用留下的旧地图页。</p>
 <h3 id="_11">路线整体偏移</h3>
 <p>检查坐标来源选择、是否重复转换，以及中心是否取在跑道中心。Android 主界面只能填 WGS84。若位置正确但轮廓错位，再检查方向和跑道尺寸。</p>
 <h3 id="_12">距离或跑道输入变灰，不能编辑</h3>

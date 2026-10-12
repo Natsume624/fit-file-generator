@@ -21,7 +21,10 @@ SEARCH_PROVIDERS = (
 )
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: https://tile.openstreetmap.org https://services.arcgisonline.com; connect-src 'self'; "
+    "img-src 'self' data: https://tile.openstreetmap.org https://services.arcgisonline.com "
+    "https://webst01.is.autonavi.com https://webst02.is.autonavi.com "
+    "https://wprd01.is.autonavi.com https://wprd02.is.autonavi.com "
+    "https://wprd03.is.autonavi.com https://wprd04.is.autonavi.com; connect-src 'self'; "
     "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
@@ -126,6 +129,8 @@ class MapPicker:
                     except Exception:
                         return self.send(502, {'error': '地点搜索暂时不可用。可缩放地图选点，或导入 GPX。'})
                 allowed = {'': 'map.html', 'map.js': 'map.js', 'map-sources.js': 'map-sources.js', 'map.css': 'map.css',
+                           'map-coordinates.js': 'map-coordinates.js',
+                           'map-location.js': 'map-location.js',
                            'vendor/leaflet.js': 'vendor/leaflet.js', 'vendor/leaflet.css': 'vendor/leaflet.css'}
                 if relative not in allowed:
                     return self.send(404, {'error': '不存在'})
@@ -188,7 +193,7 @@ class MapPicker:
                 if provider == 'nominatim':
                     parameters['format'] = 'jsonv2'
                 request = Request(endpoint+'?'+urlencode(parameters), headers={
-                    'User-Agent': 'NatsumeFitGenerator/2.4.1 (+https://github.com/Natsume624/fit-file-generator)',
+                    'User-Agent': 'NatsumeFitGenerator/2.4.2 (+https://github.com/Natsume624/fit-file-generator)',
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.6',
                 })
                 try:

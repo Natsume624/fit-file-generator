@@ -2,11 +2,11 @@
 
 ————Natsume
 
-基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.4.1），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、自然轨迹起伏、平均步频与步幅设置和批量导出。
+基于 [IAMAI-Dev/KeepTrack](https://github.com/IAMAI-Dev/KeepTrack) 的本地定制版本（2.4.2），保留 GPL-3.0 许可证。支持免 Key 地图校准、GPX 原路线导入、自然轨迹起伏、平均步频与步幅设置和批量导出。
 
 ## 下载与完整操作说明
 
-在 [v2.4.1 发布页](https://github.com/Natsume624/fit-file-generator/releases/tag/v2.4.1) 下载 Windows 64 位 EXE、Android 正式签名 APK、离线 HTML / Markdown 说明和 SHA-256 校验文件。
+在 [v2.4.2 发布页](https://github.com/Natsume624/fit-file-generator/releases/tag/v2.4.2) 下载 Windows 64 位 EXE、Android 正式签名 APK、离线 HTML / Markdown 说明和 SHA-256 校验文件。
 
 **第一次使用请看 [完整操作说明](USER_GUIDE.md)**，覆盖安装、界面、第一次生成、地图与坐标、GPX 分段、全部运动参数、开始时间、单份 / 批量保存、文件检查和常见问题。Windows 主界面右上角和 Android 标题区均有“操作说明”按钮，打开内置版本即可离线阅读。
 
@@ -22,7 +22,7 @@
 
 最方便的方式：点击“打开地图”，在浏览器中搜索学校/体育场，放大地图，点击跑道中央或拖动蓝色中心点。调整方向、直道长度和弯道半径后，点击“应用到 .fit 文件生成器”，位置与尺寸会自动回填到桌面程序。原来的手动经纬度输入仍然保留。
 
-地图使用内置 Leaflet 1.9.4，默认 Esri 卫星影像，可切换 Esri 街道地图或 OpenStreetMap。加载失败或 8 秒未加载到任何瓦片时自动尝试备用底图，并提供“重试底图”。所有底图使用 WGS84 Web Mercator，不引入 GCJ-02 偏移。地点搜索使用 Photon，失败或无结果时尝试 Nominatim；两端均限频并缓存。不需要 API Key。影像拍摄时间、清晰度与跑道细节因地区而异，不能保证测量级精度。底图加载和搜索需联网，服务可能因网络或服务端限制暂时不可用。Leaflet 随 EXE 打包，GPX 导入和 FIT 导出可离线运行。
+地图使用内置 Leaflet 1.9.4，默认使用国内高德卫星影像，可切换高德街道地图、Esri 影像 / 街道地图或 OpenStreetMap。加载失败或 8 秒未加载到任何瓦片时自动尝试备用底图，并提供“重试底图”。高德底图使用本地 GCJ-02 显示投影，点击、跑道与 GPX 原坐标仍保持 WGS84，切换底图不重写轨迹。地点搜索使用 Photon，失败或无结果时尝试 Nominatim；两端均限频并缓存。当前公共瓦片不需要 API Key。搜索不可用时可展开“按坐标定位”，支持高德 / 腾讯 GCJ-02 与 GPS / GPX WGS84 坐标；“底图连接诊断”显示各来源加载计数，可复制反馈且不含精确位置。影像拍摄时间、清晰度与跑道细节因地区而异，不能保证测量级精度。底图加载和搜索需联网，服务可能因网络或服务端限制暂时不可用。Leaflet 随 EXE 打包，GPX 导入和 FIT 导出可离线运行。
 
 手动输入时，坐标默认来自高德或腾讯（GCJ-02）；地图回填后自动设为 WGS84，不重复转换。纬度、经度分开填写，取跑道中心而非入口或跑道边缘。
 
@@ -51,7 +51,7 @@ GPX 只在本机读取。浏览器查看时，路线点仅通过回环地址传�
 ```powershell
 uv sync
 uv run python -m unittest discover -p "test_*.py"
-node --test scripts/test_map_sources.cjs
+node --test scripts/test_map_sources.cjs scripts/test_map_coordinates.cjs scripts/test_map_location.cjs
 uv run main.py
 uv run --with pyinstaller pyinstaller --noconfirm --onefile --windowed --name .fit文件生成器 --add-data "web;web" main.py
 ```
@@ -68,5 +68,6 @@ uv run --with pyinstaller pyinstaller --noconfirm --onefile --windowed --name .f
 - 地图交互参考 FIT-Tool 的功能思路，代码为本项目独立实现，未复制其源码。
 - [Leaflet](https://leafletjs.com/)：BSD-2-Clause，许可证附于 web/vendor/LICENSE-Leaflet。
 - [OpenStreetMap 瓦片使用政策](https://operations.osmfoundation.org/policies/tiles/)：显示署名、遵守浏览器缓存、仅加载当前视野，不提供批量预下载。
+- [高德坐标说明](https://lbs.amap.com/api/javascript-api-v2/guide/abc/basetype) 与 [高德瓦片层文档](https://lbs.amap.com/api/maps-javascript-api/reference/layer/tilelayer)：GCJ-02 仅用于底图显示，本地转换后仍以 WGS84 导出。公共服务可能调整可用性，仅请求当前视野并保留署名。
 - [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9)：公共影像底图，仅请求当前视野，保留提供方署名，不批量预下载。
 - [Photon](https://github.com/komoot/photon) 与 [Nominatim 使用政策](https://operations.osmfoundation.org/policies/nominatim/)：仅在点击搜索时查询，限频并缓存；公共服务不保证可用性。

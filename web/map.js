@@ -2,7 +2,8 @@
 const $=id=>document.getElementById(id);
 const status=text=>{$('status').textContent=text;};
 const map=L.map('map',{maxZoom:21}).setView([35,105],4);
-window.FitMapSources(map,$('mapSource'),$('offline'),$('retryMap'));
+window.FitMapSources(map,$('mapSource'),$('offline'),$('retryMap'),$('mapDiagnostics'));
+window.FitMapLocation(map,$('coordinateForm'),status);
 L.control.scale({imperial:false}).addTo(map);
 let selected=null,marker=null,routeMode=false,previewTimer=null,revision=0;
 const line=L.polyline([],{color:'#2563eb',weight:5,opacity:.85,smoothFactor:0}).addTo(map);

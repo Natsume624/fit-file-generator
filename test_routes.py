@@ -109,12 +109,17 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(r.headers['X-Frame-Options'],'DENY')
             self.assertIn("default-src 'none'",r.headers['Content-Security-Policy'])
             self.assertIn('https://services.arcgisonline.com',r.headers['Content-Security-Policy'])
+            self.assertIn('https://webst01.is.autonavi.com',r.headers['Content-Security-Policy'])
             self.assertEqual(r.headers['Referrer-Policy'],'no-referrer')
         self.assertEqual(self.post('preview',self.values)['points'],[[30.58,114.33]])
         self.assertTrue(self.post('apply',self.values)['ok'])
         self.assertEqual(len(self.applied),1)
         with urlopen(self.picker.url+'map-sources.js') as r:
             self.assertIn(b'FitMapSources',r.read())
+        with urlopen(self.picker.url+'map-coordinates.js') as r:
+            self.assertIn(b'FitMapCoordinates',r.read())
+        with urlopen(self.picker.url+'map-location.js') as r:
+            self.assertIn(b'FitMapLocation',r.read())
 
     def test_search_fallback_and_cache(self):
         fallback = [{'lat':'30.58','lon':'114.33','display_name':'湖北大学'}]

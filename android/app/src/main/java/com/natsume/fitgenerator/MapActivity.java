@@ -156,7 +156,7 @@ public final class MapActivity extends Activity {
             connection = (HttpURLConnection) url.openConnection();
             connection.setConnectTimeout(4_000);
             connection.setReadTimeout(6_000);
-            connection.setRequestProperty("User-Agent", "fit-file-generator-android/2.4.1 (+https://github.com/Natsume624/fit-file-generator)");
+            connection.setRequestProperty("User-Agent", "fit-file-generator-android/2.4.2 (+https://github.com/Natsume624/fit-file-generator)");
             connection.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6");
             if (connection.getResponseCode() != 200) throw new IllegalStateException("地点搜索暂不可用（" + connection.getResponseCode() + "）");
             byte[] body;

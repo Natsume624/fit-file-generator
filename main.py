@@ -25,7 +25,7 @@ from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.profile_type import Event, EventType, FileType, Manufacturer, Sport, SubSport
 
 APP_NAME = ".fit文件生成器"
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
 MAX_BATCH_RECORDS = 500_000
@@ -767,13 +767,17 @@ if __name__ == "__main__":
             try:
                 with urlopen(picker.url) as response:
                     page = response.read()
-                    assert b'leaflet' in page and b'map-sources.js' in page
+                    assert b'leaflet' in page and b'map-sources.js' in page and b'map-coordinates.js' in page and b'map-location.js' in page
                     assert 'https://services.arcgisonline.com' in response.headers['Content-Security-Policy']
+                    assert 'https://webst01.is.autonavi.com' in response.headers['Content-Security-Policy']
                 with urlopen(picker.url+'vendor/leaflet.js') as response:
                     assert len(response.read())>100000
                 with urlopen(picker.url+'map-sources.js') as response:
                     sources = response.read()
-                    assert b'FitMapSources' in sources and b'services.arcgisonline.com' in sources
+                    assert b'FitMapSources' in sources and b'is.autonavi.com' in sources
+                for resource in ('map-coordinates.js', 'map-location.js'):
+                    with urlopen(picker.url+resource) as response:
+                        assert len(response.read()) > 500
             finally:
                 picker.close()
             result = {"ok": True, "title": root.title(), "cadence": 171, "distance": session.total_distance,

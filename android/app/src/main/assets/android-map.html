@@ -14,6 +14,7 @@
   <div class="eyebrow">NATSUME / MAP CALIBRATION</div>
   <h1 id="hero">把跑道放到正确的位置。</h1>
   <p id="intro">搜索学校或体育场，然后点击实际跑道中心。拖动蓝点可微调。</p>
+  <label for="mapSource">地图底图</label><div class="search"><select id="mapSource"></select><button id="retryMap" type="button">重试底图</button></div>
   <form id="searchForm"><div class="search"><input id="query" placeholder="学校 / 体育场 / 城市" maxlength="120"><button id="searchButton">查找</button></div></form>
   <div id="results"></div>
   <div id="editor">
@@ -25,9 +26,10 @@
   </div>
   <div id="routeInfo" hidden><h2>GPX 原始路线</h2><p id="routeName"></p><p>绿色为起点，橙色为终点。路线保持原经纬度。</p></div>
   <p id="status" role="status" aria-live="polite">正在加载地图…</p>
-  <div class="credits">地图 © OpenStreetMap contributors · 地点搜索 Photon</div>
+  <div class="credits">底图来源见地图署名 · 地点搜索 Photon / Nominatim · OpenStreetMap</div>
  </section>
  <script src="vendor/leaflet.js"></script>
+ <script src="map-sources.js"></script>
  <script src="android-map.js"></script>
 </body>
 </html>

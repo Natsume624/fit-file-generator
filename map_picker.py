@@ -15,12 +15,49 @@ WEB_ROOT = Path(__file__).resolve().parent / 'web'
 MAX_REQUEST_BYTES = 4096
 MAX_SEARCH_RESPONSE_BYTES = 500_000
 MAX_SEARCH_CACHE_ENTRIES = 64
+SEARCH_PROVIDERS = (
+    ('photon', 'https://photon.komoot.io/api/'),
+    ('nominatim', 'https://nominatim.openstreetmap.org/search'),
+)
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; "
+    "img-src 'self' data: https://tile.openstreetmap.org https://services.arcgisonline.com; connect-src 'self'; "
     "font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
+
+
+def search_results(payload, provider):
+    """Normalize only bounded, finite WGS84 results from either provider."""
+    features = payload.get('features') if provider == 'photon' and isinstance(payload, dict) else payload
+    if not isinstance(features, list):
+        raise ValueError('地点搜索响应格式无效')
+    results = []
+    for feature in features[:5]:
+        if not isinstance(feature, dict):
+            continue
+        if provider == 'photon':
+            geometry = feature.get('geometry')
+            coordinates = geometry.get('coordinates') if isinstance(geometry, dict) else None
+            if not isinstance(coordinates, list) or len(coordinates) < 2:
+                continue
+            lon, lat = coordinates[:2]
+            properties = feature.get('properties')
+            properties = properties if isinstance(properties, dict) else {}
+            label = ' · '.join(str(properties[k]) for k in ('name', 'district', 'street', 'city', 'state') if properties.get(k))
+            category = {'university':'大学','bus_stop':'公交站','station':'车站','subway_entrance':'地铁入口','sports_centre':'体育中心','stadium':'体育场','college':'学院','school':'学校'}.get(properties.get('osm_value'))
+            if category:
+                label += ' · '+category
+        else:
+            lat, lon = feature.get('lat'), feature.get('lon')
+            label = str(feature.get('display_name') or '搜索结果')
+        try:
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if math.isfinite(lat) and math.isfinite(lon) and -85 <= lat <= 85 and -180 <= lon <= 180:
+            results.append({'lat': lat, 'lon': lon, 'label': ' '.join(label.split())[:200] or '搜索结果'})
+    return results
 
 
 def validate_selection(value):
@@ -88,7 +125,7 @@ class MapPicker:
                         return self.send(200, owner.search(query))
                     except Exception:
                         return self.send(502, {'error': '地点搜索暂时不可用。可缩放地图选点，或导入 GPX。'})
-                allowed = {'': 'map.html', 'map.js': 'map.js', 'map.css': 'map.css',
+                allowed = {'': 'map.html', 'map.js': 'map.js', 'map-sources.js': 'map-sources.js', 'map.css': 'map.css',
                            'vendor/leaflet.js': 'vendor/leaflet.js', 'vendor/leaflet.css': 'vendor/leaflet.css'}
                 if relative not in allowed:
                     return self.send(404, {'error': '不存在'})
@@ -144,43 +181,38 @@ class MapPicker:
             if time.monotonic()-self.last_search < 1.2:
                 return {'error': '请稍后再搜索', 'results': []}
             self.last_search = time.monotonic()
-            request = Request('https://photon.komoot.io/api/?'+urlencode({'q':query, 'limit':5}), headers={'User-Agent':'NatsumeFitGenerator/2.4.0 (personal desktop route editor)'})
-            with urlopen(request, timeout=12) as response:
-                raw = response.read(MAX_SEARCH_RESPONSE_BYTES + 1)
-            if len(raw) > MAX_SEARCH_RESPONSE_BYTES:
-                raise ValueError('地点搜索响应过大')
-            payload = json.loads(raw)
-            if not isinstance(payload, dict) or not isinstance(payload.get('features', []), list):
-                raise ValueError('地点搜索响应格式无效')
             results = []
-            for feature in payload.get('features', [])[:5]:
-                if not isinstance(feature, dict):
-                    continue
-                geometry = feature.get('geometry', {})
-                if not isinstance(geometry, dict):
-                    continue
-                coordinates = geometry.get('coordinates', [])
-                if not isinstance(coordinates, list) or len(coordinates) < 2:
-                    continue
+            received_response = False
+            for provider, endpoint in SEARCH_PROVIDERS:
+                parameters = {'q': query, 'limit': 5}
+                if provider == 'nominatim':
+                    parameters['format'] = 'jsonv2'
+                request = Request(endpoint+'?'+urlencode(parameters), headers={
+                    'User-Agent': 'NatsumeFitGenerator/2.4.1 (+https://github.com/Natsume624/fit-file-generator)',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.6',
+                })
                 try:
-                    lon, lat = float(coordinates[0]), float(coordinates[1])
-                except (TypeError, ValueError, OverflowError):
+                    with urlopen(request, timeout=6) as response:
+                        raw = response.read(MAX_SEARCH_RESPONSE_BYTES + 1)
+                    if len(raw) > MAX_SEARCH_RESPONSE_BYTES:
+                        raise ValueError('地点搜索响应过大')
+                    results = search_results(json.loads(raw), provider)
+                    received_response = True
+                    if results:
+                        break
+                except (OSError, ValueError, TypeError):
                     continue
-                properties = feature.get('properties', {})
-                if not isinstance(properties, dict):
-                    properties = {}
-                label = ' · '.join(str(properties[k]) for k in ('name', 'district', 'street', 'city', 'state') if properties.get(k))
-                category = {'university':'大学','bus_stop':'公交站','station':'车站','subway_entrance':'地铁入口','sports_centre':'体育中心','stadium':'体育场','college':'学院','school':'学校'}.get(properties.get('osm_value'))
-                if category:
-                    label += ' · '+category
-                if math.isfinite(lat) and math.isfinite(lon) and -85 <= lat <= 85 and -180 <= lon <= 180:
-                    label = ' '.join(label.split())[:200]
-                    results.append({'lat':lat, 'lon':lon, 'label':label or '搜索结果'})
+            if not received_response:
+                self.last_search = time.monotonic()
+                raise OSError('地点搜索服务暂不可用')
             value = {'results':results}
             self.cache[query] = value
             self.cache.move_to_end(query)
             while len(self.cache) > MAX_SEARCH_CACHE_ENTRIES:
                 self.cache.popitem(last=False)
+            # Space completed searches too: a slow primary request must not let
+            # two fast fallback requests run back-to-back on the next query.
+            self.last_search = time.monotonic()
             return value
 
     def close(self):

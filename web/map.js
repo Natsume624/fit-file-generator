@@ -2,10 +2,8 @@
 const $=id=>document.getElementById(id);
 const status=text=>{$('status').textContent=text;};
 const map=L.map('map',{maxZoom:21}).setView([35,105],4);
-const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxNativeZoom:19,maxZoom:21,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'}).addTo(map);
+window.FitMapSources(map,$('mapSource'),$('offline'),$('retryMap'));
 L.control.scale({imperial:false}).addTo(map);
-tiles.on('tileerror',()=>{$('offline').hidden=false;});
-tiles.on('tileload',()=>{$('offline').hidden=true;});
 let selected=null,marker=null,routeMode=false,previewTimer=null,revision=0;
 const line=L.polyline([],{color:'#2563eb',weight:5,opacity:.85,smoothFactor:0}).addTo(map);
 function values(){return {lat:selected.lat,lon:selected.lng,bearing:Number($('bearing').value),straight:Number($('straight').value),radius:Number($('radius').value)};}

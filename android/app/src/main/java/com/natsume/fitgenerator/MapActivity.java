@@ -22,15 +22,18 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Local Leaflet map backed by OpenStreetMap tiles and a bounded native Photon search proxy. */
+/** Bundled Leaflet with switchable WGS84 basemaps and bounded place-search fallback. */
 public final class MapActivity extends Activity {
     private static final int MAX_SEARCH_BYTES = 512 * 1024;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private WebView webView;
     private JSONObject initialState;
+    private final LinkedHashMap<String, JSONArray> searchCache = new LinkedHashMap<>(64, .75f, true);
+    private long lastSearch;
 
     @SuppressLint("SetJavaScriptEnabled") // Required by bundled Leaflet; navigation is locked to local assets.
     @Override protected void onCreate(Bundle state) {
@@ -108,19 +111,53 @@ public final class MapActivity extends Activity {
                 deliverSearchError("请至少输入两个字，最多 120 字。");
                 return;
             }
-            worker.execute(() -> searchPhoton(clean));
+            worker.execute(() -> searchPlaces(clean));
         }
     }
 
-    private void searchPhoton(String query) {
+    private void searchPlaces(String query) {
+        if (searchCache.containsKey(query)) {
+            deliverSearch(searchCache.get(query));
+            return;
+        }
+        long now = System.nanoTime();
+        if (now - lastSearch < 1_200_000_000L) {
+            deliverSearchError("请稍后再搜索");
+            return;
+        }
+        lastSearch = now;
+        JSONArray results = new JSONArray();
+        boolean receivedResponse = false;
+        for (boolean photon : new boolean[]{true, false}) {
+            try {
+                results = requestSearch(query, photon);
+                receivedResponse = true;
+                if (results.length() > 0) break;
+            } catch (Exception ignored) {
+                // A failed or empty primary response may still have a usable fallback.
+            }
+        }
+        lastSearch = System.nanoTime();
+        if (!receivedResponse) {
+            deliverSearchError("地点搜索暂不可用。可缩放地图选点，或返回输入坐标 / 导入 GPX。");
+            return;
+        }
+        searchCache.put(query, results);
+        if (searchCache.size() > 64) searchCache.remove(searchCache.keySet().iterator().next());
+        deliverSearch(results);
+    }
+
+    private JSONArray requestSearch(String query, boolean photon) throws Exception {
         HttpURLConnection connection = null;
         try {
             String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name());
-            URL url = new URL("https://photon.komoot.io/api/?limit=6&q=" + encoded);
+            URL url = new URL((photon ? "https://photon.komoot.io/api/?limit=5&q="
+                    : "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=") + encoded);
             connection = (HttpURLConnection) url.openConnection();
-            connection.setConnectTimeout(8_000);
-            connection.setReadTimeout(10_000);
-            connection.setRequestProperty("User-Agent", "fit-file-generator-android/2.4.0 (+https://github.com/Natsume624/fit-file-generator)");
+            connection.setConnectTimeout(4_000);
+            connection.setReadTimeout(6_000);
+            connection.setRequestProperty("User-Agent", "fit-file-generator-android/2.4.1 (+https://github.com/Natsume624/fit-file-generator)");
+            connection.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6");
             if (connection.getResponseCode() != 200) throw new IllegalStateException("地点搜索暂不可用（" + connection.getResponseCode() + "）");
             byte[] body;
             try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -133,35 +170,53 @@ public final class MapActivity extends Activity {
                 }
                 body = output.toByteArray();
             }
-            JSONArray features = new JSONObject(new String(body, StandardCharsets.UTF_8)).optJSONArray("features");
+            String json = new String(body, StandardCharsets.UTF_8);
+            JSONArray features = photon ? new JSONObject(json).getJSONArray("features") : new JSONArray(json);
             JSONArray results = new JSONArray();
-            if (features != null) for (int i = 0; i < features.length(); i++) {
+            for (int i = 0; i < Math.min(5, features.length()); i++) {
                 JSONObject feature = features.optJSONObject(i);
                 if (feature == null) continue;
-                JSONObject geometry = feature.optJSONObject("geometry");
-                JSONArray coordinates = geometry == null ? null : geometry.optJSONArray("coordinates");
-                if (coordinates == null || coordinates.length() < 2) continue;
-                JSONObject properties = feature.optJSONObject("properties");
-                String name = properties == null ? "搜索结果" : properties.optString("name", properties.optString("city", "搜索结果"));
-                String city = properties == null ? "" : properties.optString("city", properties.optString("state", ""));
+                double lat, lon;
+                String label;
+                if (photon) {
+                    JSONObject geometry = feature.optJSONObject("geometry");
+                    JSONArray coordinates = geometry == null ? null : geometry.optJSONArray("coordinates");
+                    if (coordinates == null || coordinates.length() < 2) continue;
+                    lat = coordinates.optDouble(1, Double.NaN);
+                    lon = coordinates.optDouble(0, Double.NaN);
+                    JSONObject properties = feature.optJSONObject("properties");
+                    String name = properties == null ? "搜索结果" : properties.optString("name", properties.optString("city", "搜索结果"));
+                    String city = properties == null ? "" : properties.optString("city", properties.optString("state", ""));
+                    label = city.isEmpty() || city.equals(name) ? name : name + " · " + city;
+                } else {
+                    lat = feature.optDouble("lat", Double.NaN);
+                    lon = feature.optDouble("lon", Double.NaN);
+                    label = feature.optString("display_name", "搜索结果");
+                }
+                if (!Double.isFinite(lat) || !Double.isFinite(lon) || lat < -85 || lat > 85 || lon < -180 || lon > 180) continue;
+                label = label.strip();
+                if (label.length() > 200) label = label.substring(0, 200);
                 JSONObject item = new JSONObject();
-                item.put("label", city.isEmpty() || city.equals(name) ? name : name + " · " + city);
-                item.put("lat", coordinates.getDouble(1));
-                item.put("lon", coordinates.getDouble(0));
+                item.put("label", label.isEmpty() ? "搜索结果" : label);
+                item.put("lat", lat);
+                item.put("lon", lon);
                 results.put(item);
             }
-            String script = "window.receiveSearch(" + results + ")";
-            runOnUiThread(() -> webView.evaluateJavascript(script, null));
-        } catch (Exception error) {
-            deliverSearchError(error.getMessage() == null ? "地点搜索失败" : error.getMessage());
+            return results;
         } finally {
             if (connection != null) connection.disconnect();
         }
     }
 
+    private void deliverSearch(JSONArray results) {
+        runOnUiThread(() -> {
+            if (!isFinishing() && !isDestroyed()) webView.evaluateJavascript("window.receiveSearch(" + results + ")", null);
+        });
+    }
+
     private void deliverSearchError(String message) {
         runOnUiThread(() -> {
-            if (webView != null) webView.evaluateJavascript("window.searchFailed(" + JSONObject.quote(message) + ")", null);
+            if (!isFinishing() && !isDestroyed() && webView != null) webView.evaluateJavascript("window.searchFailed(" + JSONObject.quote(message) + ")", null);
         });
     }
 

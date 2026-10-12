@@ -1,4 +1,5 @@
 import json
+import io
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,7 +13,7 @@ from fit_tool.profile.messages.record_message import RecordMessage
 from fit_tool.profile.messages.session_message import SessionMessage
 from geographiclib.geodesic import Geodesic
 from routes import load_gpx,make_route
-from map_picker import MapPicker
+from map_picker import MapPicker, search_results
 from main import Run,generate_fit,track_position,to_wgs84,SOURCES
 
 GPX = '''<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><trkseg><trkpt lat="30.58" lon="114.33"/><trkpt lat="30.581" lon="114.33"/><trkpt lat="30.581" lon="114.331"/></trkseg><trkseg><trkpt lat="30.59" lon="114.35"/><trkpt lat="30.591" lon="114.35"/></trkseg></trk></gpx>'''
@@ -107,10 +108,50 @@ class BridgeTests(unittest.TestCase):
             self.assertIn(b'leaflet',r.read())
             self.assertEqual(r.headers['X-Frame-Options'],'DENY')
             self.assertIn("default-src 'none'",r.headers['Content-Security-Policy'])
+            self.assertIn('https://services.arcgisonline.com',r.headers['Content-Security-Policy'])
             self.assertEqual(r.headers['Referrer-Policy'],'no-referrer')
         self.assertEqual(self.post('preview',self.values)['points'],[[30.58,114.33]])
         self.assertTrue(self.post('apply',self.values)['ok'])
         self.assertEqual(len(self.applied),1)
+        with urlopen(self.picker.url+'map-sources.js') as r:
+            self.assertIn(b'FitMapSources',r.read())
+
+    def test_search_fallback_and_cache(self):
+        fallback = [{'lat':'30.58','lon':'114.33','display_name':'湖北大学'}]
+        response = io.BytesIO(json.dumps(fallback).encode())
+        with patch('map_picker.urlopen', side_effect=[TimeoutError('unreachable'), response]) as remote:
+            result = self.picker.search('湖北大学')
+            self.assertEqual(result['results'][0], {'lat':30.58,'lon':114.33,'label':'湖北大学'})
+            self.assertEqual(remote.call_count,2)
+            self.assertIn('nominatim.openstreetmap.org',remote.call_args.args[0].full_url)
+            self.assertEqual(self.picker.search('湖北大学'),result)
+            self.assertEqual(remote.call_count,2)
+
+    def test_empty_or_oversized_primary_search_uses_fallback(self):
+        fallback = [{'lat':'30.58','lon':'114.33','display_name':'武汉'}]
+        for primary in [b'{"features":[]}', b'x'*500001]:
+            self.picker.last_search=0
+            self.picker.cache.clear()
+            with patch('map_picker.urlopen', side_effect=[io.BytesIO(primary),io.BytesIO(json.dumps(fallback).encode())]):
+                self.assertEqual(len(self.picker.search('武汉')['results']),1)
+
+    def test_unavailable_search_is_not_cached_and_is_rate_limited(self):
+        with patch('map_picker.urlopen',side_effect=OSError('unreachable')) as remote:
+            with self.assertRaises(OSError):self.picker.search('武汉')
+            self.assertNotIn('武汉',self.picker.cache)
+            self.assertIn('error',self.picker.search('武汉'))
+            self.assertEqual(remote.call_count,2)
+
+    def test_search_rejects_invalid_remote_coordinates(self):
+        for provider,payload in [
+            ('photon',{'features':[{'geometry':{'coordinates':[114.33,30.58]},'properties':{'name':'学校'}},
+                                    {'geometry':{'coordinates':[114,'nan']}}, {'geometry':{'coordinates':[999,30]}}]}),
+            ('nominatim',[{'lat':'30.58','lon':'114.33','display_name':'学校'},
+                          {'lat':'nan','lon':'114'}, {'lat':'30','lon':'999'}, {'lat':None}]),
+        ]:
+            results=search_results(payload,provider)
+            self.assertEqual(len(results),1)
+            self.assertEqual(results[0]['lat'],30.58)
 
     def test_origin_token_and_invalid_input(self):
         with self.assertRaises(HTTPError) as result:self.post('apply',self.values,'https://example.org')

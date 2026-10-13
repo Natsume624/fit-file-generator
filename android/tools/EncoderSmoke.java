@@ -18,6 +18,31 @@ public final class EncoderSmoke {
         byte[] payload = FitEncoder.encode(run);
         if (payload.length < 10_000) throw new AssertionError("Unexpectedly small FIT output");
         Files.write(Path.of(args[0]), payload);
+        FitEncoder.Run constant = new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(),
+                run.latitude(), run.longitude(), run.bearing(), run.straight(), run.radius(), run.start(), null, null, 0, 0);
+        for (double[] sample : FitEncoder.motionSamples(constant)) {
+            if (sample[1] != 5000.0 / 1800) throw new AssertionError("Constant speed mode changed");
+        }
+        for (int seconds : new int[]{1, 2, 30, 1800, 86400}) {
+            FitEncoder.Run boundary = new FitEncoder.Run(seconds * 3.0, seconds, run.cadence(), run.latitude(), run.longitude(),
+                    run.bearing(), run.straight(), run.radius(), run.start(), null, null, 0, 30);
+            double[][] samples = FitEncoder.motionSamples(boundary);
+            double average = 3.0;
+            if (samples[0][0] != 0 || samples[seconds][0] != seconds * 3.0) throw new AssertionError("Speed profile changed total distance");
+            for (int second = 1; second <= seconds; second++) {
+                if (samples[second][1] < average * .7 - 1e-8 || samples[second][1] > average * 1.3 + 1e-8)
+                    throw new AssertionError("Speed profile outside requested bounds");
+                if (Math.abs(samples[second][0] - samples[second - 1][0] - samples[second][1]) > 1e-8)
+                    throw new AssertionError("Speed and distance disagree");
+            }
+        }
+        for (double variation : new double[]{-1, 30.01, Double.NaN, Double.POSITIVE_INFINITY}) {
+            try {
+                new FitEncoder.Run(run.distanceMeters(), run.durationSeconds(), run.cadence(), run.latitude(), run.longitude(),
+                        run.bearing(), run.straight(), run.radius(), run.start(), null, null, 0, variation);
+                throw new AssertionError("Invalid speed variation accepted");
+            } catch (IllegalArgumentException expected) { }
+        }
 
         String gpx = "<gpx xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>Morning Run</name>"
                 + "<trkseg><trkpt lat=\"30.5800\" lon=\"114.3300\"/><trkpt lat=\"30.5810\" lon=\"114.3300\"/>"

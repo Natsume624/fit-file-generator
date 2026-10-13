@@ -73,6 +73,13 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(2*(summary.avg_cadence+summary.avg_fractional_cadence),171)
         for record,expected in [(points[0],route.points[0]),(points[-1],route.points[-1])]:
             self.assertLess(Geodesic.WGS84.Inverse(record.position_lat,record.position_long,*expected)['s12'],.02)
+        self.assertLess(min(point.speed for point in points), summary.avg_speed)
+        self.assertGreater(max(point.speed for point in points), summary.avg_speed)
+        for before, after in zip(points, points[1:]):
+            self.assertAlmostEqual(after.distance - before.distance, after.speed, delta=.011)
+        for point in points:
+            expected = route.position(point.distance)
+            self.assertLess(Geodesic.WGS84.Inverse(point.position_lat, point.position_long, *expected)['s12'], .025)
 
 
     def test_gpx_custom_step_length(self):

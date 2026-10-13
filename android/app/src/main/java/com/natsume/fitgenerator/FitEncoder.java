@@ -26,7 +26,15 @@ public final class FitEncoder {
             ZonedDateTime start,
             Route route,
             Double stepLengthMeters,
-            double trackVariationMeters) {
+            double trackVariationMeters,
+            double speedVariationPercent) {
+        public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
+                   double bearing, double straight, double radius, ZonedDateTime start, Route route,
+                   Double stepLengthMeters, double trackVariationMeters) {
+            this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius,
+                    start, route, stepLengthMeters, trackVariationMeters, 12);
+        }
+
         public Run(double distanceMeters, int durationSeconds, int cadence, double latitude, double longitude,
                    double bearing, double straight, double radius, ZonedDateTime start, Route route, Double stepLengthMeters) {
             this(distanceMeters, durationSeconds, cadence, latitude, longitude, bearing, straight, radius, start, route, stepLengthMeters, 0);
@@ -54,6 +62,7 @@ public final class FitEncoder {
             finite(straight, "直道长度");
             finite(radius, "弯道半径");
             validateTrackVariation(trackVariationMeters);
+            validateSpeedVariation(speedVariationPercent);
             if (distanceMeters < 1 || distanceMeters > 1_000_000) throw new IllegalArgumentException("距离应为 0.001～1000 km");
             if (durationSeconds < 1 || durationSeconds > 86_400) throw new IllegalArgumentException("时长应为 1 秒～24 小时");
             if (cadence < 30 || cadence > 300) throw new IllegalArgumentException("平均步频应为 30～300 步/分钟");
@@ -80,6 +89,44 @@ public final class FitEncoder {
         }
     }
 
+    static void validateSpeedVariation(double value) {
+        if (!Double.isFinite(value) || value < 0 || value > 30) {
+            throw new IllegalArgumentException("速度波动应为 0～30%，0 为匀速");
+        }
+    }
+
+    /** Distance and preceding interval speed; index zero repeats the first speed. */
+    public static double[][] motionSamples(Run run) {
+        double average = run.distanceMeters / run.durationSeconds;
+        double[][] samples = new double[run.durationSeconds + 1][2];
+        if (run.speedVariationPercent == 0 || run.durationSeconds == 1) {
+            for (int second = 0; second <= run.durationSeconds; second++) {
+                samples[second][0] = run.distanceMeters * second / run.durationSeconds;
+                samples[second][1] = average;
+            }
+            return samples;
+        }
+        long seed = run.start.toEpochSecond();
+        double[] noise = new double[run.durationSeconds];
+        double mean = 0;
+        for (int second = 0; second < noise.length; second++) {
+            noise[second] = 0.60 * smoothNoise(second + 0.5, 90, seed + 101)
+                    + 0.30 * smoothNoise(second + 0.5, 30, seed + 211)
+                    + 0.10 * smoothNoise(second + 0.5, 10, seed + 307);
+            mean += noise[second];
+        }
+        mean /= noise.length;
+        double scale = 0.25;
+        for (double value : noise) scale = Math.max(scale, Math.abs(value - mean));
+        for (int second = 1; second <= run.durationSeconds; second++) {
+            double speed = average * (1 + run.speedVariationPercent / 100 * (noise[second - 1] - mean) / scale);
+            samples[second][0] = second == run.durationSeconds ? run.distanceMeters : samples[second - 1][0] + speed;
+            samples[second][1] = samples[second][0] - samples[second - 1][0];
+        }
+        samples[0][1] = samples[1][1];
+        return samples;
+    }
+
     private record Field(int number, int size, int type) {}
 
     public static byte[] encode(Run run) {
@@ -87,10 +134,16 @@ public final class FitEncoder {
         long start = run.start.toEpochSecond() - FIT_EPOCH_OFFSET;
         long end = start + run.durationSeconds;
         double speed = run.distanceMeters / run.durationSeconds;
+        double[][] samples = motionSamples(run);
+        double maxSpeed = speed;
+        for (double[] sample : samples) maxSpeed = Math.max(maxSpeed, sample[1]);
+        if (maxSpeed >= 65.5345) throw new IllegalArgumentException("最高速度超出 FIT 文件允许范围，请减少距离或增加时长");
+        if (run.stepLengthMeters == null && maxSpeed * 60 / run.cadence >= 6.55345) {
+            throw new IllegalArgumentException("自动步幅超出 FIT 文件允许范围，请检查距离、时长和步频");
+        }
         int cadenceWhole = run.cadence / 2;
         int cadenceFraction = (run.cadence % 2) * 64;
         int heartRate = speed > 10.0 / 3 ? 165 : speed > 25.0 / 9 ? 150 : speed > 50.0 / 21 ? 135 : 125;
-        int power = (int) Math.round(speed * 70 * 1.05);
         int stepLength = (int) Math.round(run.effectiveStepLengthMeters() * 10_000);
 
         definition(data, 0,
@@ -113,7 +166,9 @@ public final class FitEncoder {
                 new Field(7, 2, UINT16), new Field(53, 1, UINT8),
                 new Field(85, 2, UINT16));
         for (int second = 0; second <= run.durationSeconds; second++) {
-            double distance = run.distanceMeters * second / run.durationSeconds;
+            double distance = samples[second][0], instantSpeed = samples[second][1];
+            int instantStepLength = run.stepLengthMeters != null ? stepLength
+                    : (int) Math.round(instantSpeed * 60 / run.cadence * 10_000);
             double[] position = trackPosition(run, distance);
             header(data);
             u32(data, start + second);
@@ -123,10 +178,10 @@ public final class FitEncoder {
             u8(data, heartRate);
             u8(data, cadenceWhole);
             u32(data, Math.round(distance * 100));
-            u16(data, Math.round(speed * 1000));
-            u16(data, power);
+            u16(data, Math.round(instantSpeed * 1000));
+            u16(data, Math.round(instantSpeed * 70 * 1.05));
             u8(data, cadenceFraction);
-            u16(data, stepLength);
+            u16(data, instantStepLength);
         }
 
         eventDefinition(data);
@@ -137,6 +192,7 @@ public final class FitEncoder {
         int elapsed = run.durationSeconds * 1000;
         long totalDistance = Math.round(run.distanceMeters * 100);
         int encodedSpeed = (int) Math.round(speed * 1000);
+        int encodedMaxSpeed = (int) Math.round(maxSpeed * 1000);
         int strides = (int) Math.round((run.cadence / 2.0) * run.durationSeconds / 60.0);
 
         definition(data, 19,
@@ -155,7 +211,7 @@ public final class FitEncoder {
         s32(data, semicircles(first[0])); s32(data, semicircles(first[1]));
         s32(data, semicircles(last[0])); s32(data, semicircles(last[1]));
         u32(data, elapsed); u32(data, elapsed); u32(data, totalDistance);
-        u16(data, encodedSpeed); u16(data, encodedSpeed);
+        u16(data, encodedSpeed); u16(data, encodedMaxSpeed);
         u8(data, cadenceWhole); u8(data, cadenceWhole); u16(data, strides);
         u8(data, 1); u8(data, 0);    // running / generic
         u16(data, stepLength); u8(data, cadenceFraction); u8(data, cadenceFraction);
@@ -175,7 +231,7 @@ public final class FitEncoder {
         s32(data, semicircles(first[0])); s32(data, semicircles(first[1]));
         u8(data, 1); u8(data, 0);
         u32(data, elapsed); u32(data, elapsed); u32(data, totalDistance);
-        u16(data, encodedSpeed); u16(data, encodedSpeed);
+        u16(data, encodedSpeed); u16(data, encodedMaxSpeed);
         u8(data, cadenceWhole); u8(data, cadenceWhole); u16(data, strides);
         u16(data, 1); u16(data, stepLength); u8(data, cadenceFraction); u8(data, cadenceFraction);
 

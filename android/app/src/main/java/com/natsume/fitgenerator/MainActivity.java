@@ -130,7 +130,7 @@ public final class MainActivity extends Activity {
         addField(movement, "平均步频", "cadence", "步/分钟", "170", true);
         addField(movement, "步幅（留空自动）", "step_length", "米/步", "", true);
         fields.get("step_length").setHint("例如 0.80 = 80 厘米/步");
-        TextView stepNote = text("留空按距离、时长和步频计算；填写后按自定义步幅导出。", 12, muted, Typeface.NORMAL);
+        TextView stepNote = text("步幅留空自动计算；生成时自动加入平滑的快慢变化，总距离和时长不变。", 12, muted, Typeface.NORMAL);
         stepNote.setPadding(0, dp(8), 0, 0);
         movement.addView(stepNote);
         content.addView(movement);
@@ -290,7 +290,8 @@ public final class MainActivity extends Activity {
                 long pace = Math.round(duration * 60 / (currentRoute.length() / 1000));
                 metrics.setText(getString(R.string.route_metrics_summary,
                         currentRoute.length() / 1000, pace / 60, pace % 60, Math.round(cadence))
-                        + "\n" + stepLengthSummary(currentRoute.length(), duration, cadence));
+                        + "\n" + stepLengthSummary(currentRoute.length(), duration, cadence)
+                        + "\n速度变化   自动");
                 return;
             }
             double distance = number("distance");
@@ -309,6 +310,7 @@ public final class MainActivity extends Activity {
             metrics.setText(getString(R.string.metrics_summary,
                     pace / 60, pace % 60, Math.round(cadence), perimeter, distance * 1000 / perimeter)
                     + "\n" + stepLengthSummary(distance * 1000, duration, cadence)
+                    + "\n速度变化   自动"
                     + "\n轨迹模式   " + (variation == 0 ? "规则跑道" : "自然起伏（上限 " + format(Math.min(variation, radius * 0.3), 1) + " 米）"));
         } catch (RuntimeException ignored) {
             metrics.setText("请检查输入数据");

@@ -25,13 +25,14 @@ from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.profile_type import Event, EventType, FileType, Manufacturer, Sport, SubSport
 
 APP_NAME = ".fit文件生成器"
-VERSION = "2.4.2"
+VERSION = "2.4.4"
 SOURCES = ("高德 / 腾讯（GCJ-02）", "GPS / Google 地球（WGS84）", "百度（BD-09）")
 BG, CARD, INK, MUTED, ACCENT = "#edf2f7", "#ffffff", "#18283f", "#61738a", "#2563eb"
 MAX_BATCH_RECORDS = 500_000
 MIN_STEP_LENGTH = 0.01
 MAX_STEP_LENGTH = 6.5
 MAX_TRACK_VARIATION = 8.0
+MAX_SPEED_VARIATION = 30.0
 
 
 def to_wgs84(lat, lon, source):
@@ -65,6 +66,7 @@ class Run:
     route: Route | None = None
     step_length: float | None = None  # Metres per step; None keeps automatic calculation.
     track_variation: float = 0.0  # Maximum lateral deviation in metres; GPX is never altered.
+    speed_variation: float = 12.0  # Internal model amplitude; automatic in both app interfaces.
 
     @property
     def perimeter(self):
@@ -149,6 +151,35 @@ def track_position(run, distance):
     return result["lat2"], result["lon2"]
 
 
+def motion_samples(run):
+    """Per-second distance and interval speed, with exact totals and smooth variation.
+
+    The start record repeats the first interval speed; subsequent speeds describe
+    the preceding second, so their integral matches the exported distance.
+    """
+    average = run.distance / run.duration
+    if run.speed_variation == 0 or run.duration == 1:
+        return [(run.distance * second / run.duration, average)
+                for second in range(run.duration + 1)]
+    seed = int(run.start.timestamp())
+    noise = [0.60 * _smooth_noise(second + 0.5, 90, seed + 101)
+             + 0.30 * _smooth_noise(second + 0.5, 30, seed + 211)
+             + 0.10 * _smooth_noise(second + 0.5, 10, seed + 307)
+             for second in range(run.duration)]
+    mean = math.fsum(noise) / run.duration
+    # The floor prevents tiny changes in very short runs being amplified.
+    scale = max(0.25, max(abs(value - mean) for value in noise))
+    speeds = [average * (1 + run.speed_variation / 100 * (value - mean) / scale)
+              for value in noise]
+    samples = [(0.0, speeds[0])]
+    distance = 0.0
+    for second, speed in enumerate(speeds, 1):
+        next_distance = run.distance if second == run.duration else distance + speed
+        samples.append((next_distance, next_distance - distance))
+        distance = next_distance
+    return samples
+
+
 def validate_run(run):
     """Validate the public generation boundary, not only GUI input fields."""
     if not isinstance(run, Run):
@@ -157,6 +188,7 @@ def validate_run(run):
         "distance": (1, 1_000_000), "lat": (-85, 85), "lon": (-180, 180),
         "bearing": (0, 360), "straight": (1, 1000), "radius": (5, 300),
         "track_variation": (0, MAX_TRACK_VARIATION),
+        "speed_variation": (0, MAX_SPEED_VARIATION),
     }
     for name, (low, high) in numeric_limits.items():
         value = getattr(run, name)
@@ -183,6 +215,12 @@ def generate_fit(run, destination, progress=lambda _: None):
     start_ts = int(run.start.timestamp() * 1000)
     end_ts = start_ts + run.duration * 1000
     speed = run.distance / run.duration
+    samples = motion_samples(run)
+    max_speed = max(value for _, value in samples)
+    if max_speed >= 65.5345:
+        raise ValueError("最高速度超出 FIT 文件允许范围，请减少距离或增加时长")
+    if run.step_length is None and max_speed * 60 / run.cadence >= 6.55345:
+        raise ValueError("自动步幅超出 FIT 文件允许范围，请检查距离、时长和步频")
     step_length_mm = run.effective_step_length * 1000
     # FIT uses strides/min (two steps), including fractional cadence for odd spm.
     rpm = run.cadence / 2
@@ -199,16 +237,15 @@ def generate_fit(run, destination, progress=lambda _: None):
         event = EventMessage()
         event.event, event.event_type, event.timestamp = Event.TIMER, event_type, timestamp
         builder.add(event)
-    for second in range(run.duration + 1):
-        distance = run.distance * second / run.duration
+    for second, (distance, instant_speed) in enumerate(samples):
         lat, lon = track_position(run, distance)
         record = RecordMessage()
         record.timestamp = start_ts + second * 1000
         record.position_lat, record.position_long = lat, lon
-        record.distance, record.speed = distance, speed
+        record.distance, record.speed = distance, instant_speed
         record.cadence, record.fractional_cadence = whole, fraction
-        record.step_length = step_length_mm
-        record.heart_rate, record.power, record.stance_time = heart_rate, power, stance
+        record.step_length = step_length_mm if run.step_length is not None else instant_speed * 60 / run.cadence * 1000
+        record.heart_rate, record.power, record.stance_time = heart_rate, round(instant_speed * 70 * 1.05), stance
         record.altitude = 20.0
         builder.add(record)
         if second % 100 == 0:
@@ -223,7 +260,7 @@ def generate_fit(run, destination, progress=lambda _: None):
         summary.timestamp, summary.start_time = end_ts, start_ts
         summary.total_elapsed_time = summary.total_timer_time = run.duration
         summary.total_distance = run.distance
-        summary.avg_speed = summary.max_speed = speed
+        summary.avg_speed, summary.max_speed = speed, max_speed
         summary.avg_cadence = summary.max_cadence = whole
         summary.avg_fractional_cadence = summary.max_fractional_cadence = fraction
         summary.total_strides = round(rpm * run.duration / 60)
@@ -388,7 +425,7 @@ class FITGeneratorGUI:
                 self.fields[key] = widget
                 row += 1
             if section.startswith("01"):
-                ttk.Label(form, text="例如 0.80 = 80 厘米/步；留空按距离、时长和步频计算。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
+                ttk.Label(form, text="步幅 0.80 = 80 厘米/步，留空自动计算。生成时自动加入平滑的快慢变化，总距离和时长不变。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
                 row += 1
             elif section.startswith("02"):
                 ttk.Label(form, text="填写操场中心；尺寸按实际跑道填写。轨迹起伏默认 3 米，范围 0～8 米；GPX 保留原路线。", foreground=MUTED, wraplength=380).grid(row=row, column=0, columnspan=2, sticky="w", pady=8)
@@ -461,7 +498,7 @@ class FITGeneratorGUI:
             pace = round(t * 60 / d)
             step_length = self._step_length_summary(d * 1000, t * 60, cadence)
             mode = f"自然起伏（上限 {min(variation, radius * 0.3):g} 米）" if variation else "规则跑道"
-            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈\n轨迹模式   {mode}")
+            self.metrics.set(f"平均配速   {pace // 60}′{pace % 60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n速度变化   自动\n跑道周长   {length:.2f} 米\n预计圈数   {d * 1000 / length:.2f} 圈\n轨迹模式   {mode}")
         except ValueError as error:
             self.metrics.set(str(error))
         try:
@@ -489,7 +526,7 @@ class FITGeneratorGUI:
             cadence = self._number('cadence',30,300)
             pace = round(t*60/(self.route.length/1000))
             step_length = self._step_length_summary(self.route.length, t * 60, cadence)
-            self.metrics.set(f'GPX 距离   {self.route.length/1000:.3f} km\n平均配速   {pace//60}′{pace%60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}')
+            self.metrics.set(f'GPX 距离   {self.route.length/1000:.3f} km\n平均配速   {pace//60}′{pace%60:02d}″ /km\n平均步频   {cadence:g} 步/分钟\n{step_length}\n速度变化   自动')
         except ValueError as error:
             self.metrics.set(str(error))
         self.location_note.set(f'{self.route.name}\n{len(self.route.points)} 个原始点 · 保留原路线\n距离按路线计算，时间、步频和步幅按当前设置生成。')
@@ -718,6 +755,8 @@ if __name__ == "__main__":
             assert "0.8000" in app.metrics.get() and "自定义" in app.metrics.get()
             sample = app.read_run()
             assert sample.step_length == 0.8
+            assert sample.speed_variation == 12 and "速度变化   自动" in app.metrics.get()
+            assert 'speed_variation' not in app.v and 'speed_variation' not in app.fields
             assert sample.track_variation == 3 and "自然起伏" in app.metrics.get()
             app.v["track_variation"].set("0")
             app.refresh_preview()
@@ -728,6 +767,12 @@ if __name__ == "__main__":
             decoded = FitFile.from_file(str(path))
             messages = [r.message for r in decoded.records if not r.is_definition]
             session = next(m for m in messages if isinstance(m, SessionMessage))
+            records = [m for m in messages if isinstance(m, RecordMessage)]
+            assert min(m.speed for m in records) < session.avg_speed < max(m.speed for m in records)
+            assert session.max_speed == max(m.speed for m in records)
+            assert records[-1].distance == sample.distance
+            for before, after in zip(records, records[1:]):
+                assert abs(after.distance - before.distance - after.speed) < .011
             assert (session.avg_cadence + session.avg_fractional_cadence) * 2 == 171
             assert session.total_distance == 400
             for message in messages:
@@ -755,6 +800,7 @@ if __name__ == "__main__":
             app.segment_choice.current(0)
             app.select_segment()
             routed = app.read_run()
+            assert routed.speed_variation == 12 and 'speed_variation' not in app.fields
             generate_fit(routed,folder/'runtime-route.fit')
             assert routed.route is not None and str(app.fields['distance'].cget('state'))=='disabled'
             assert routed.track_variation == 0 and str(app.fields['track_variation'].cget('state')) == 'disabled'
@@ -781,6 +827,8 @@ if __name__ == "__main__":
             finally:
                 picker.close()
             result = {"ok": True, "title": root.title(), "cadence": 171, "distance": session.total_distance,
+                      "speed_variation_percent": sample.speed_variation, "min_speed": min(m.speed for m in records),
+                      "max_speed": session.max_speed,
                       "step_length_m": sample.step_length, "gpx_distance": routed.distance,
                       "bundled_map": True, "bundled_user_guide": True, "version": VERSION}
             root.destroy()

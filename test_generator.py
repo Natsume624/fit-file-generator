@@ -1,7 +1,7 @@
 import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from datetime import datetime
+from datetime import datetime, timedelta
 import unittest
 from dataclasses import replace
 from geographiclib.geodesic import Geodesic
@@ -10,7 +10,7 @@ from fit_tool.fit_file import FitFile
 from fit_tool.profile.messages.record_message import RecordMessage
 from fit_tool.profile.messages.session_message import SessionMessage
 from fit_tool.profile.messages.lap_message import LapMessage
-from main import Run, to_wgs84, SOURCES, track_xy, varied_track_xy, track_position, generate_fit
+from main import Run, to_wgs84, SOURCES, track_xy, varied_track_xy, track_position, motion_samples, generate_fit
 
 
 class GeneratorTests(unittest.TestCase):
@@ -83,8 +83,9 @@ class GeneratorTests(unittest.TestCase):
             summaries = [m for m in messages if isinstance(m, (LapMessage, SessionMessage))]
             lengths = [Geodesic.WGS84.Inverse(a.position_lat, a.position_long, b.position_lat, b.position_long)['s12']
                        for a, b in zip(points, points[1:])]
-            self.assertLess(max(lengths), run.distance / run.duration * 1.2)
-            self.assertGreater(min(lengths), run.distance / run.duration * .8)
+            for length, point in zip(lengths, points[1:]):
+                self.assertLess(length, point.speed * 1.2)
+                self.assertGreater(length, point.speed * .8)
             self.assertLess(abs(sum(lengths) - run.distance), run.distance * .02)
             for point, distance in [(points[0], 0), (points[-1], run.distance)]:
                 self.assertLess(Geodesic.WGS84.Inverse(point.position_lat, point.position_long, *track_position(run, distance))['s12'], .02)
@@ -114,9 +115,9 @@ class GeneratorTests(unittest.TestCase):
                 summaries = [m for m in messages if isinstance(m, (SessionMessage, LapMessage))]
                 self.assertEqual(len(points), run.duration+1)
                 self.assertEqual(len(summaries), 2)
-                for point in points:
+                for point, (_, speed) in zip(points, motion_samples(run)):
                     self.assertEqual((point.cadence + point.fractional_cadence)*2, cadence)
-                    self.assertAlmostEqual(point.step_length, run.effective_step_length * 1000, delta=0.051)
+                    self.assertAlmostEqual(point.step_length, speed * 60 / cadence * 1000, delta=0.051)
                 for summary in summaries:
                     self.assertEqual((summary.avg_cadence+summary.avg_fractional_cadence)*2, cadence)
                     self.assertEqual(summary.total_distance, 1000)
@@ -127,6 +128,83 @@ class GeneratorTests(unittest.TestCase):
                 self.assertLess(abs(distance-1000), 1)
                 with self.assertRaises(FileExistsError):
                     generate_fit(run, path)
+
+    def test_speed_profile_totals_bounds_smoothness_and_repeatability(self):
+        for duration in [1, 2, 9, 30, 300, 1800, 86400]:
+            for variation in [0, 12, 30]:
+                run = replace(self.run, duration=duration, speed_variation=variation)
+                with self.subTest(duration=duration, variation=variation):
+                    samples = motion_samples(run)
+                    speeds = [speed for _, speed in samples[1:]]
+                    average = run.distance / run.duration
+                    self.assertEqual(len(samples), duration + 1)
+                    self.assertEqual(samples[0][0], 0)
+                    self.assertEqual(samples[-1][0], run.distance)
+                    self.assertAlmostEqual(math.fsum(speeds), run.distance, places=7)
+                    self.assertGreater(min(speeds), 0)
+                    self.assertGreaterEqual(min(speeds), average * (1 - variation / 100) - 1e-8)
+                    self.assertLessEqual(max(speeds), average * (1 + variation / 100) + 1e-8)
+                    for (before, _), (after, speed) in zip(samples, samples[1:]):
+                        self.assertAlmostEqual(after - before, speed, places=8)
+                    if duration >= 300 and variation:
+                        self.assertGreater(max(speeds) - min(speeds), average * variation / 100)
+                        self.assertLess(max(abs(a - b) for a, b in zip(speeds, speeds[1:])), average * variation / 100 * .2)
+        self.assertEqual(motion_samples(self.run), motion_samples(self.run))
+        other = replace(self.run, start=self.run.start + timedelta(days=1))
+        self.assertNotEqual(motion_samples(self.run), motion_samples(other))
+
+    def test_variable_fit_speed_distance_positions_and_summary_agree(self):
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / 'variable.fit'
+            generate_fit(self.run, path)
+            messages = [r.message for r in FitFile.from_file(str(path)).records if not r.is_definition]
+            points = [m for m in messages if isinstance(m, RecordMessage)]
+            speeds = [point.speed for point in points[1:]]
+            average = self.run.distance / self.run.duration
+            self.assertLess(min(speeds), average * .95)
+            self.assertGreater(max(speeds), average * 1.05)
+            self.assertAlmostEqual(math.fsum(speeds), self.run.distance, delta=self.run.duration * .0005)
+            for before, after in zip(points, points[1:]):
+                self.assertEqual(after.timestamp - before.timestamp, 1000)
+                self.assertAlmostEqual(after.distance - before.distance, after.speed, delta=.011)
+                gps_speed = Geodesic.WGS84.Inverse(before.position_lat, before.position_long,
+                                                  after.position_lat, after.position_long)['s12']
+                self.assertAlmostEqual(gps_speed, after.speed, delta=.03)
+            for point in points:
+                expected = track_position(self.run, point.distance)
+                self.assertLess(Geodesic.WGS84.Inverse(point.position_lat, point.position_long, *expected)['s12'], .025)
+                self.assertAlmostEqual(point.step_length, point.speed * 60 / self.run.cadence * 1000, delta=.25)
+                self.assertAlmostEqual(point.power, point.speed * 70 * 1.05, delta=.54)
+            for summary in (m for m in messages if isinstance(m, (LapMessage, SessionMessage))):
+                self.assertEqual(summary.total_distance, self.run.distance)
+                self.assertEqual(summary.total_timer_time, self.run.duration)
+                self.assertAlmostEqual(summary.avg_speed, average, delta=.0005)
+                self.assertEqual(summary.max_speed, max(speeds))
+                self.assertGreater(summary.max_speed, summary.avg_speed)
+
+    def test_zero_speed_variation_keeps_constant_motion(self):
+        run = replace(self.run, speed_variation=0)
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / 'constant.fit'
+            generate_fit(run, path)
+            messages = [r.message for r in FitFile.from_file(str(path)).records if not r.is_definition]
+            points = [m for m in messages if isinstance(m, RecordMessage)]
+            self.assertEqual(len({point.speed for point in points}), 1)
+            self.assertEqual(len({point.step_length for point in points}), 1)
+            for summary in (m for m in messages if isinstance(m, (LapMessage, SessionMessage))):
+                self.assertEqual(summary.avg_speed, summary.max_speed)
+
+    def test_generation_rejects_invalid_speed_variation_and_overflow(self):
+        with TemporaryDirectory(dir=Path(__file__).parent) as temp:
+            path = Path(temp) / 'invalid.fit'
+            invalid = [replace(self.run, speed_variation=value)
+                       for value in [-.1, 30.01, float('nan'), float('inf'), True, '12']]
+            invalid.extend([replace(self.run, distance=19500, duration=300, step_length=.8),
+                            replace(self.run, distance=5000, cadence=30)])
+            for run in invalid:
+                with self.subTest(run=run), self.assertRaises(ValueError):
+                    generate_fit(run, path)
+                self.assertFalse(path.exists())
 
     def test_custom_step_length_roundtrip(self):
         for length in [0.01, 0.8, 1.23456, 6.5]:
